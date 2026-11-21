@@ -26,6 +26,7 @@
 #include "audio.hpp"
 #include "audio_out.hpp"
 #include "build.hpp"
+#include "clock.hpp"
 #include "game_file.hpp"
 #include "host.hpp"
 #include "input.hpp"
@@ -95,6 +96,9 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--headless") {
             headless = true;
+        } else if (a == "--virtual-time") {
+            host::clock::use_virtual();
+            mute = true;  // a sound device plays in real time
         } else if (a == "--fullscreen") {
             fullscreen = true;
         } else if (a == "--dump-frames" && k + 1 < argc) {
@@ -115,7 +119,7 @@ int main(int argc, char** argv) {
     if (!path) {
         std::fprintf(stderr,
                      "usage: qilin_run [--ram-mb N] [--game-dir DIR] [--data-dir DIR] [--dump-audio FILE.wav] [--mute] [--audio-channels 2|6]\n"
-                     "                 [--headless] [--fullscreen] [--dump-frames DIR] [--frames N] [--press SCRIPT] [--gpu N] [--any-build] <game>\n"
+                     "                 [--headless] [--fullscreen] [--dump-frames DIR] [--frames N] [--press SCRIPT] [--virtual-time] [--gpu N] [--any-build] <game>\n"
                      "  <game>           an extracted disc's folder, or its default.xbe\n"
                      "  --ram-mb N       guest RAM in MB (%u by default, as the retail Xbox)\n"
                      "  --game-dir DIR   the extracted disc (default: default.xbe's directory)\n"
@@ -128,6 +132,8 @@ int main(int argc, char** argv) {
                      "  --dump-frames DIR  write each frame shown there as frame_NNNNN.png\n"
                      "  --frames N       stop after N frames\n"
                      "  --press SCRIPT   controller presses on port 1 by frame: FRAME:BUTTONS[/FRAMES],... (e.g. 2100:start/8,2400:lu/60)\n"
+                     "  --virtual-time   time moves as the game runs, not by the host's clock: a run goes the same way\n"
+                     "                   every time, however fast the host (for --press scripts; no sound device)\n"
                      "  --gpu N          the Vulkan device to draw with, by index (default: the best)\n"
                      "  --any-build      run an executable that is not the supported build\n",
                      host::kRetailRamMb, platform::default_data_folder().string().c_str());
@@ -311,7 +317,7 @@ int main(int argc, char** argv) {
     // process instead (the test programs, which create no thread).
     if (const char* v = std::getenv("QILIN_EXIT_AFTER_ENTRY"); v && *v && *v != '0') std::_Exit(0);
     for (;;) {
-        host::sched::sleep_until(host::sched::Clock::now() + std::chrono::milliseconds(10));
+        host::sched::sleep_until(host::clock::now() + std::chrono::milliseconds(10));
         host::idle(c);
     }
 }

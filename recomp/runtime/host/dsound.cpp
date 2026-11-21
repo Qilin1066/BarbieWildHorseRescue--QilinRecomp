@@ -41,6 +41,7 @@
 
 #include "audio.hpp"
 #include "audio_out.hpp"
+#include "clock.hpp"
 #include "host.hpp"
 #include "sched.hpp"
 #include "strf.hpp"
@@ -195,7 +196,7 @@ uint64_t audio_now() {
     const DirectSound& d = ds();
     if (!d.object) return 0;
     if (d.paused) return uint64_t(std::chrono::duration<double>(d.paused_at - d.epoch).count() * audio::kOutputRate);
-    return uint64_t(std::chrono::duration<double>(std::chrono::steady_clock::now() - d.epoch).count() * audio::kOutputRate);
+    return uint64_t(std::chrono::duration<double>(host::clock::now() - d.epoch).count() * audio::kOutputRate);
 }
 
 // The APU's global sample counter (NV_PAPU_XGSCNT): 48 kHz frames since the
@@ -400,9 +401,12 @@ void direct_sound_create(rt::Context& c) {
     DirectSound& d = ds();
     if (!d.object) {
         d.object = guest_object(c);
-        d.epoch = std::chrono::steady_clock::now();
+        d.epoch = host::clock::now();
         d.mem = c.mem, d.mem_size = c.mem_size;
-        d.mixer = std::thread(mixer_thread);
+        // With virtual time the mix is brought up to the clock only from the
+        // game's own threads (pump_audio, the calls), so completions come at
+        // the same points every run.
+        if (!host::clock::is_virtual()) d.mixer = std::thread(mixer_thread);
         if (!d.dump_path.empty()) {
             d.wav = std::make_unique<audio::WavWriter>(d.dump_path);
             if (!d.wav->ok()) std::fprintf(stderr, "qilin: can't write %s\n", d.dump_path.c_str());
@@ -1304,10 +1308,10 @@ void pause_audio(bool paused) {
     if (paused == d.paused || !d.object) return;
     if (paused) {
         catch_up_locked();
-        d.paused_at = std::chrono::steady_clock::now();
+        d.paused_at = host::clock::now();
         d.paused = true;
     } else {
-        d.epoch += std::chrono::steady_clock::now() - d.paused_at;
+        d.epoch += host::clock::now() - d.paused_at;
         d.paused = false;
     }
 }

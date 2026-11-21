@@ -43,6 +43,7 @@
 #include "nv2a_shaders.hpp"
 #include "texture.hpp"
 #include "vsh.hpp"
+#include "clock.hpp"
 #include "host.hpp"
 #include "sched.hpp"
 #include "window.hpp"
@@ -319,7 +320,7 @@ uint32_t add_ref(rt::Context& c, uint32_t r) {  // D3DResource_AddRef, as the or
 constexpr double kVblankHz = 60000.0 / 1001.0;
 
 uint32_t vblanks_elapsed(const Device& d) {
-    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - d.epoch).count();
+    const double s = std::chrono::duration<double>(host::clock::now() - d.epoch).count();
     return uint32_t(s * kVblankHz);
 }
 
@@ -567,7 +568,7 @@ void create_device(rt::Context& c) {
     for (uint32_t i = 0; i < count + 1; ++i) d->frame_buffers.push_back(make_surface(c, *d, linear, width, height, 4));
     if (auto_depth) d->depth = make_surface(c, *d, kFmtLinD24S8, width, height, 4);
     d->vblank_data = guest_alloc(*d, 12);
-    d->epoch = std::chrono::steady_clock::now();
+    d->epoch = host::clock::now();
 
     std::printf("qilin_run: D3D device %ux%u, %u back buffer%s, %s, presentation interval %u, multisample type %#x, swap effect %u; Vulkan on %s\n",
                 width, height, count, count == 1 ? "" : "s", auto_depth ? "D24S8 depth" : "no depth buffer", d->interval,
@@ -960,7 +961,8 @@ void apply_settings(Device& d, const platform::Settings& s) {
     p.mask = float(s.mask) / 100.0f;
     p.vsync = s.vsync;
     p.low_latency = s.low_latency;
-    d.frame_rate = s.frame_rate;
+    // Virtual time paces frames by the console's vblanks only.
+    d.frame_rate = host::clock::is_virtual() ? platform::Settings::FrameRate::Original : s.frame_rate;
     p.aspect = d.aspect ? d.aspect : 16.0f / 9.0f;  // a new shape comes with the game's next frame (update_aspect)
     d.renderer->set_picture(p);
     d.renderer->set_anisotropy(s.anisotropy);
@@ -1114,7 +1116,7 @@ void swap(rt::Context& c) {
     // with the menu over it until it closes; the time it was open is taken off
     // the game's clock (its vblanks) and the sound's, so nothing jumps.
     if (d.menu && d.menu->open()) {
-        const auto paused = std::chrono::steady_clock::now();
+        const auto paused = host::clock::now(), paused_real = std::chrono::steady_clock::now();
         pause_audio(true);
         while (d.menu->open()) {
             pump_window(d);
@@ -1123,8 +1125,8 @@ void swap(rt::Context& c) {
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
         }
         pause_audio(false);
-        d.epoch += std::chrono::steady_clock::now() - paused;
-        d.clock_last += std::chrono::steady_clock::now() - paused;  // the unlocked clock too
+        d.epoch += host::clock::now() - paused;  // (no time passes in virtual time)
+        d.clock_last += std::chrono::steady_clock::now() - paused_real;  // the unlocked clock too
         d.last_shown = {};
         d.menu->restart_frame_times();
         d.frame_began = {};
@@ -3176,6 +3178,14 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
                     auto len = [&](int reg) { return std::sqrt(double(k[4 * reg]) * k[4 * reg] + double(k[4 * reg + 1]) * k[4 * reg + 1] + double(k[4 * reg + 2]) * k[4 * reg + 2]); };
                     x += strf("  normalize=%u normal matrix rows' lengths %.4g %.4g %.4g\n", rs(kRsNormalizeNormals), len(kCNormal), len(kCNormal + 1), len(kCNormal + 2));
                 }
+                {
+                    const uint32_t ttf = ld(c, kTextureStateTable + 4 * kTsTextureTransformFlags);
+                    x += strf("  stage 0 texture transform %#x", ttf);
+                    if (ttf)
+                        for (int k = 0; k < 16; ++k)
+                            x += strf(k % 4 ? " %.3g" : " | %.3g", fl(kDeviceStorage + kDevTransforms + 64 * kTsTexture0 + 4 * uint32_t(k)));
+                    x += strf(" fvf %#x\n", ld(c, kDeviceStorage + kDevVertexShader + 4));
+                }
                 x += strf("  fog=%u table=%u range=%u start=%g end=%g density=%g colour=%08X\n", rs(kRsFogEnable), rs(kRsFogTableMode),
                           rs(kRsRangeFogEnable), fl(kRenderStateTable + 4 * kRsFogStart), fl(kRenderStateTable + 4 * kRsFogEnd),
                           fl(kRenderStateTable + 4 * kRsFogDensity), rs(kRsFogColor));
@@ -4226,7 +4236,7 @@ void register_d3d(const D3dConfig& config) {
         Device& d = *g_device;
         pump_window(d);
         // Pixels the title writes into a frame buffer while it waits (no draws, no Swap).
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = host::clock::now();
         if (!d.cpu_frames.empty() && now - d.cpu_frames_checked >= std::chrono::milliseconds(16)) {
             d.cpu_frames_checked = now;
             flush_cpu_frames(c, d);

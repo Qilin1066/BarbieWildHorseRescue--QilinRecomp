@@ -24,6 +24,17 @@ Here `qilin_run` does only what the console's kernel does before a title runs (R
 
 It reads an extracted disc (a folder, or the `default.xbe` in one). Given a disc image it says to extract it first (`qilin extract`); reading the image directly in the I/O manager is a later step.
 
+## Virtual time (`--virtual-time`, v0.10.0)
+Everything in the runtime that reads time reads one clock (`host/clock.*`): the scheduler's waits, timeouts, timers and quantum, `KeTickCount`, `KeQuerySystemTime`, `KeStallExecutionProcessor`, the time-stamp counter behind `rdtsc` (which the engine calibrates against XAPI's `QueryPerformanceCounter`, itself `rdtsc`, and takes its frame time from), the display's vblanks and Swap's wait for them, DirectSound's play position, and the host's housekeeping hooks. Normally it is the host's steady clock, and a run's course depends on how fast the host is: on a software renderer a frame takes 50–70 ms, so the game's time step, and with it where a held stick leaves the player, differs from run to run.
+
+With `--virtual-time` the clock moves only as the guest does:
+- **When the processor goes idle** (every guest thread waits), the thread leaving it moves the time on to the earliest wait's end or timer and does what the clock thread does in real time (ends those waits, fires the timers, updates the tick count, runs DPCs, dispatches). There is no clock thread.
+- **By work**: lifted code's preemption points (its backward branches) always call `preempt()`, which spends 50 ns a call and takes the scheduler's lock only when something is due (a wait's end, a timer, the quantum, the next millisecond's tick) or a switch was asked for; each `rdtsc` spends 20 ns. Spin loops end, quanta end, at points the guest's own code decides.
+- DirectSound's mixer thread doesn't run: the mix is brought up to the clock by the game's calls and the housekeeping hook, so packet completions come at the same points. No sound device is opened (it would play in real time); `--dump-audio` still writes. The frame rate is the console's.
+- `KeQuerySystemTime` starts at 2001-11-15 00:00 UTC.
+
+The result: two runs with the same presses give the same frames, pixel for pixel (2,400 frames from power-on to the title screen, intro movie included, checked in v0.10.0). Press scripts written for a real-time run don't carry over (loading takes fewer frames in virtual time: the costs are guesses at the console's speed, not measurements), but once written they land every time. It is also what the differential test and frame-hash regression tests will need. A run is a little slower than real time on the cloud workspace's software renderer (2,400 frames in about 95 s).
+
 ## End-to-end tests without the game
 `recomp/tests/make_test_xbe.cpp` writes small hand-assembled Xbox programs as XBE files. CMake lifts each with `qilin lift`, builds it with `run.cpp` and the runtime exactly as the game is built (`qilin_add_program`), and CTest runs it:
 

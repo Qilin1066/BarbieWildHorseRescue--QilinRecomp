@@ -6,6 +6,12 @@
 // fires timers, updates KeTickCount every millisecond, ends quanta, and
 // when no guest thread runs, runs DPCs and hands the processor on.
 //
+// With virtual time (clock.hpp) there is no clock thread: the thread that
+// leaves the processor idle moves the time on to the next wait's end or
+// timer and does the clock's work itself, and lifted code's preemption
+// points, which then always call preempt(), spend time and do it when
+// something is due. Everything happens in an order the guest decides.
+//
 // Dispatcher objects stay in guest memory in the kernel's layout (the
 // DISPATCHER_HEADER's Type and SignalState are what decide a wait), as
 // XAPI and the game read them; who waits on what is kept here, so the
@@ -27,6 +33,7 @@
 #include <thread>
 #include <vector>
 
+#include "clock.hpp"
 #include "host.hpp"
 #include "strf.hpp"
 
@@ -106,7 +113,8 @@ struct State {
              file_type = 0;
     uint32_t next_id = 1;
     std::thread::id main_host;
-    Clock::time_point start = Clock::now();
+    Clock::time_point start, next_ms;  // the clock's start (init_main); KeTickCount's last update
+    bool idling = false;               // idle_advance is moving virtual time on
     // Kernel objects by handle: the object's guest address.
     std::map<uint32_t, uint32_t> handles;
     uint32_t next_handle = 0x40000;
@@ -118,6 +126,22 @@ State& s() {
     return *st;
 }
 thread_local Thread* t_self = nullptr;
+
+// Virtual time: when the running thread next has something to do in
+// preempt() (a wait's end, a timer, the quantum, the next tick), and
+// whether a switch is wanted before then (a thread readied, a DPC queued).
+std::atomic<Clock::rep> g_due{Clock::time_point::max().time_since_epoch().count()};
+std::atomic<bool> g_switch{false};
+void note_due(Clock::time_point t) {
+    Clock::rep cur = g_due.load(std::memory_order_relaxed);
+    const Clock::rep v = t.time_since_epoch().count();
+    while (v < cur && !g_due.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
+    }
+}
+void request_preempt() {
+    rt::g_preempt.store(true, std::memory_order_relaxed);
+    g_switch.store(true, std::memory_order_relaxed);
+}
 
 rt::Context& mc() { return *s().main; }
 uint32_t kpcr() { return memory_map().kpcr(); }
@@ -143,7 +167,8 @@ void run(Thread* t) {
     st(c, kpcr() + 0x08, t->stack_limit);
     st(c, kpcr() + 0x28, t->kthread);
     rt::st8(mem(c), kpcr() + 0x24, t->irql, 0);
-    s().quantum_end = Clock::now() + kQuantum;
+    s().quantum_end = clock::now() + kQuantum;
+    note_due(s().quantum_end);
     t->cv.notify_one();
 }
 
@@ -158,9 +183,11 @@ void make_ready(Thread* t) {
     s().ready[t->priority].push_back(t);
     t->ready = true;
     if (!s().current) dispatch();
-    else if (t->priority > s().current->priority) rt::g_preempt.store(true, std::memory_order_relaxed);
+    else if (t->priority > s().current->priority) request_preempt();
     s().clock_cv.notify_one();
 }
+
+void idle_advance(std::unique_lock<std::mutex>& lk);
 
 // The running thread gives up the processor; returns when it has it again.
 void switch_out(Thread* me, std::unique_lock<std::mutex>& lk) {
@@ -171,6 +198,7 @@ void switch_out(Thread* me, std::unique_lock<std::mutex>& lk) {
         s().current = nullptr;
         dispatch();
     }
+    if (clock::is_virtual() && !s().current) idle_advance(lk);
     s().clock_cv.notify_one();
     me->cv.wait(lk, [&] { return me->running; });
     set_current(&(me == s().threads.front().get() ? mc() : me->ctx));
@@ -246,11 +274,12 @@ uint32_t wait(std::vector<uint32_t> objects, bool all, std::optional<Clock::time
     me->objects = std::move(objects);
     me->wait_all = all;
     if (auto r = try_satisfy(me)) return *r;
-    if (until && *until <= Clock::now()) return kStatusTimeout;
+    if (until && *until <= clock::now()) return kStatusTimeout;
     if (irql() >= kDispatchLevel) rt::trap(0, "a kernel wait at DISPATCH_LEVEL or above (a bug check on the Xbox)");
     me->waiting = true;
     me->deadline = until.value_or(Clock::time_point::max());
     s().waiting.push_back(me);
+    note_due(me->deadline);
     switch_out(me, lk);
     me->alertable = false;
     return me->result;
@@ -278,11 +307,10 @@ uint32_t deliver_apcs(rt::Context& c, uint32_t status) {
 std::optional<Clock::time_point> timeout_at(const rt::Context& c, uint32_t p) {
     if (!p) return std::nullopt;
     const int64_t v = int64_t(uint64_t(ld(c, p + 4)) << 32 | ld(c, p));
-    if (v < 0) return Clock::now() + std::chrono::nanoseconds(uint64_t(-v) * 100);
+    if (v < 0) return clock::now() + std::chrono::nanoseconds(uint64_t(-v) * 100);
     // Absolute: system time (100 ns since 1601), against the host's clock.
-    const int64_t now_sys = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count() / 100 +
-                            116444736000000000LL;
-    return Clock::now() + std::chrono::nanoseconds(std::max<int64_t>(0, v - now_sys) * 100);
+    const int64_t now_sys = clock::system_time();
+    return clock::now() + std::chrono::nanoseconds(std::max<int64_t>(0, v - now_sys) * 100);
 }
 
 // ------------------------------------------------------------ DPCs
@@ -315,70 +343,102 @@ void fire_timer(uint32_t t, State::Timer tm) {
     set_state(t, 1);
     signalled_changed();
     if (tm.dpc && !rt::ld8(mem(mc()), tm.dpc + 2, 0)) {
-        const uint64_t sys = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count() / 100 +
-                             116444736000000000ULL;
+        const uint64_t sys = uint64_t(clock::system_time());
         rt::st8(mem(mc()), tm.dpc + 2, 1, 0);
         st(mc(), tm.dpc + 0x14, uint32_t(sys));
         st(mc(), tm.dpc + 0x18, uint32_t(sys >> 32));
         s().dpcs.push_back(tm.dpc);
-        rt::g_preempt.store(true, std::memory_order_relaxed);
+        request_preempt();
     }
+}
+
+// The clock's work at `now`: KeTickCount (milliseconds since the runtime
+// started), waits whose time is up, timers that are due, the quantum, and
+// on an idle processor the DPCs, then whoever is ready.
+void process_time(std::unique_lock<std::mutex>& lk, Clock::time_point now) {
+    // KeTickCount: milliseconds since the runtime started.
+    if (now >= s().next_ms + std::chrono::milliseconds(1)) {
+        s().next_ms = now;
+        if (s().tick_count)
+            st(mc(), s().tick_count, uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(now - s().start).count()));
+    }
+    // Waits whose time is up.
+    for (auto it = s().waiting.begin(); it != s().waiting.end();) {
+        Thread* t = *it;
+        if (t->deadline <= now) {
+            t->result = kStatusTimeout;
+            t->waiting = false;
+            it = s().waiting.erase(it);
+            make_ready(t);
+        } else {
+            ++it;
+        }
+    }
+    // Timers that are due.
+    const uint64_t it_now = interrupt_time();
+    for (auto it = s().timers.begin(); it != s().timers.end();) {
+        if (it->second.due > it_now) { ++it; continue; }
+        const uint32_t t = it->first;
+        State::Timer tm = it->second;
+        if (tm.period) {
+            it->second.due += uint64_t(tm.period) * 10000;
+            ++it;
+        } else {
+            rt::st8(mem(mc()), t + 3, 0, 0);  // no longer inserted
+            it = s().timers.erase(it);
+        }
+        fire_timer(t, tm);
+    }
+    // The quantum: another thread of the running one's priority goes next.
+    if (Thread* cur = s().current; cur && now >= s().quantum_end) {
+        if (Thread* r = best_ready(); r && r->priority >= cur->priority) request_preempt();
+        else s().quantum_end = now + kQuantum;
+    }
+    // An idle processor runs the DPCs, then whoever is ready.
+    if (!s().current && !s().dpcs.empty() && !s().dpc_running) {
+        s().dpc_running = true;
+        run_dpcs(lk);
+        s().dpc_running = false;
+        dispatch();
+    }
+    if (!s().current) dispatch();
+}
+
+// Virtual time: when preempt() next has work (see g_due).
+void update_due() {
+    Clock::time_point t = s().next_ms + std::chrono::milliseconds(1);
+    for (Thread* w : s().waiting) t = std::min(t, w->deadline);
+    for (const auto& [addr, tm] : s().timers) t = std::min(t, s().start + std::chrono::nanoseconds(tm.due * 100));
+    if (s().current) t = std::min(t, s().quantum_end);
+    g_due.store(t.time_since_epoch().count(), std::memory_order_relaxed);
+}
+
+// Virtual time, the processor idle: on to the next wait's end or timer,
+// doing the clock's work there, until a thread has the processor.
+void idle_advance(std::unique_lock<std::mutex>& lk) {
+    if (s().idling) return;
+    s().idling = true;
+    while (!s().current) {
+        if (s().dpcs.empty()) {
+            Clock::time_point next = Clock::time_point::max();
+            for (Thread* w : s().waiting) next = std::min(next, w->deadline);
+            for (const auto& [addr, tm] : s().timers) next = std::min(next, s().start + std::chrono::nanoseconds(tm.due * 100));
+            if (next == Clock::time_point::max()) rt::trap(0, "every guest thread waits with nothing to wake it (virtual time)");
+            clock::advance_to(next);
+        }
+        process_time(lk, clock::now());
+    }
+    s().idling = false;
+    update_due();
 }
 
 void clock_thread() {
     std::unique_lock lk(s().mu);
-    auto next_ms = Clock::now();
     for (;;) {
-        Clock::time_point next = next_ms + std::chrono::milliseconds(1);
+        Clock::time_point next = s().next_ms + std::chrono::milliseconds(1);
         for (Thread* t : s().waiting) next = std::min(next, t->deadline);
         s().clock_cv.wait_until(lk, next);
-        const auto now = Clock::now();
-        // KeTickCount: milliseconds since the runtime started.
-        if (now >= next_ms + std::chrono::milliseconds(1)) {
-            next_ms = now;
-            if (s().tick_count)
-                st(mc(), s().tick_count, uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(now - s().start).count()));
-        }
-        // Waits whose time is up.
-        for (auto it = s().waiting.begin(); it != s().waiting.end();) {
-            Thread* t = *it;
-            if (t->deadline <= now) {
-                t->result = kStatusTimeout;
-                t->waiting = false;
-                it = s().waiting.erase(it);
-                make_ready(t);
-            } else {
-                ++it;
-            }
-        }
-        // Timers that are due.
-        const uint64_t it_now = interrupt_time();
-        for (auto it = s().timers.begin(); it != s().timers.end();) {
-            if (it->second.due > it_now) { ++it; continue; }
-            const uint32_t t = it->first;
-            State::Timer tm = it->second;
-            if (tm.period) {
-                it->second.due += uint64_t(tm.period) * 10000;
-                ++it;
-            } else {
-                rt::st8(mem(mc()), t + 3, 0, 0);  // no longer inserted
-                it = s().timers.erase(it);
-            }
-            fire_timer(t, tm);
-        }
-        // The quantum: another thread of the running one's priority goes next.
-        if (Thread* cur = s().current; cur && now >= s().quantum_end) {
-            if (Thread* r = best_ready(); r && r->priority >= cur->priority) rt::g_preempt.store(true, std::memory_order_relaxed);
-            else s().quantum_end = now + kQuantum;
-        }
-        // An idle processor runs the DPCs, then whoever is ready.
-        if (!s().current && !s().dpcs.empty() && !s().dpc_running) {
-            s().dpc_running = true;
-            run_dpcs(lk);
-            s().dpc_running = false;
-            dispatch();
-        }
-        if (!s().current) dispatch();
+        process_time(lk, clock::now());
     }
 }
 
@@ -398,7 +458,7 @@ void terminate(Thread* me, std::unique_lock<std::mutex>& lk) {
         s().current = nullptr;
         dispatch();
     }
-    (void)lk;
+    if (clock::is_virtual() && !s().current) idle_advance(lk);
 }
 
 uint32_t pool_alloc(uint32_t bytes);
@@ -719,10 +779,10 @@ void ke_delay_execution_thread(rt::Context& c) {
     const auto until = timeout_at(c, arg(c, 2));
     const bool alertable = arg(c, 0) == 1 && (arg(c, 1) & 0xFF);
     uint32_t r = kStatusSuccess;
-    if (alertable && (!until || *until > Clock::now())) {
+    if (alertable && (!until || *until > clock::now())) {
         r = deliver_apcs(c, wait({}, false, until, true));
         if (r == kStatusTimeout) r = kStatusSuccess;
-    } else if (!until || *until <= Clock::now()) {
+    } else if (!until || *until <= clock::now()) {
         yield();
     } else {
         wait({}, false, until);
@@ -792,7 +852,7 @@ void ke_set_base_priority_thread(rt::Context& c) {
         t->priority = p;
         rt::st8(mem(mc()), kt + kThreadPriority, uint8_t(p), 0);
         if (Thread* cur = s().current; cur && best_ready() && best_ready()->priority > cur->priority)
-            rt::g_preempt.store(true, std::memory_order_relaxed);
+            request_preempt();
     }
     ret(c, uint32_t(old), 8);
 }
@@ -858,7 +918,7 @@ void ke_insert_queue_dpc(rt::Context& c) {
     st(c, dpc + 0x14, arg(c, 1));
     st(c, dpc + 0x18, arg(c, 2));
     s().dpcs.push_back(dpc);
-    rt::g_preempt.store(true, std::memory_order_relaxed);
+    request_preempt();
     s().clock_cv.notify_one();
     ret(c, 1, 12);
 }
@@ -895,8 +955,12 @@ void ex_query_pool_block_size(rt::Context& c) {
 void ke_save_fp(rt::Context& c) { ret(c, kStatusSuccess, 4); }
 // VOID KeStallExecutionProcessor(ULONG MicroSeconds) (151): busy, no switch.
 void ke_stall_execution_processor(rt::Context& c) {
-    const auto until = Clock::now() + std::chrono::microseconds(arg(c, 0));
-    while (Clock::now() < until) {
+    if (clock::is_virtual()) {
+        clock::spend(std::chrono::microseconds(arg(c, 0)));
+    } else {
+        const auto until = clock::now() + std::chrono::microseconds(arg(c, 0));
+        while (clock::now() < until) {
+        }
     }
     ret(c, c.eax, 4);
 }
@@ -960,14 +1024,21 @@ void init_main(rt::Context& c, uint32_t kthread, GuestCall call) {
     init_header(kthread, kThreadObject, uint8_t(kKThreadSize / 4), 0);
     t_self = t.get();
     st_.current = t.get();
-    st_.quantum_end = Clock::now() + kQuantum;
+    st_.start = st_.next_ms = clock::now();
+    st_.quantum_end = st_.start + kQuantum;
     // DPCs' registers and a 64 KB stack of their own; new threads start from the same state.
     st_.dpc_ctx = c;
     st_.start_ctx = c;
     const uint32_t dpc_stack = contiguous(0x10000, 0, 0xFFFFFFFFu, 0x1000, 4);
     st_.dpc_ctx.esp = dpc_stack + 0x10000 - 16;
     st_.threads.push_back(std::move(t));
-    std::thread(clock_thread).detach();
+    if (clock::is_virtual()) {
+        rt::g_preempt.store(true);  // every preemption point counts (preempt())
+        std::lock_guard lk(st_.mu);
+        update_due();
+    } else {
+        std::thread(clock_thread).detach();
+    }
 }
 
 bool started() { return s().main != nullptr; }
@@ -1001,7 +1072,7 @@ void queue_apc_self(uint32_t routine, uint32_t context, uint32_t arg1, uint32_t 
 }
 
 uint64_t interrupt_time() {
-    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - s().start).count() / 100);
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - s().start).count() / 100);
 }
 
 void set_data_export(uint32_t ordinal, uint32_t addr) {
@@ -1023,6 +1094,7 @@ uint32_t set_timer(rt::Context& c, uint32_t t, int64_t due, uint32_t period, uin
     std::lock_guard lk(s().mu);
     const bool was = s().timers.erase(t) != 0;
     s().timers[t] = State::Timer{at, period, dpc};
+    note_due(s().start + std::chrono::nanoseconds(at * 100));
     rt::st8(mem(c), t + 3, 1, 0);  // Header.Inserted
     set_state(t, 0);
     st(c, t + 0x10, uint32_t(at));
@@ -1073,9 +1145,22 @@ void preempt() {
     auto& S = s();
     Thread* me = t_self;
     if (!me || !S.main) return;
+    const bool virt = host::clock::is_virtual();
+    if (virt) {  // a little work done; on only when something is due
+        host::clock::spend(host::clock::kPollCost);
+        if (!g_switch.load(std::memory_order_relaxed) &&
+            host::clock::now().time_since_epoch().count() < g_due.load(std::memory_order_relaxed))
+            return;
+    }
     std::unique_lock lk(S.mu);
     if (irql() >= kDispatchLevel) return;
-    g_preempt.store(false, std::memory_order_relaxed);
+    if (virt) {
+        g_switch.store(false, std::memory_order_relaxed);
+        process_time(lk, host::clock::now());
+        update_due();
+    } else {
+        g_preempt.store(false, std::memory_order_relaxed);
+    }
     if (!S.dpcs.empty() && !S.dpc_running) {
         S.dpc_running = true;
         run_dpcs(lk);
@@ -1084,7 +1169,7 @@ void preempt() {
     Thread* r = best_ready();
     if (!r || S.current != me) return;
     const bool higher = r->priority > me->priority;
-    const bool turn = r->priority == me->priority && Clock::now() >= S.quantum_end;
+    const bool turn = r->priority == me->priority && host::clock::now() >= S.quantum_end;
     if (!higher && !turn) return;
     me->running = false;
     S.current = nullptr;

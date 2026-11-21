@@ -11,6 +11,7 @@
 #include <cstring>
 #include <string_view>
 
+#include "clock.hpp"
 #include "host.hpp"
 #include "sched.hpp"
 #include "strf.hpp"
@@ -508,9 +509,7 @@ void rtl_raise_exception(rt::Context& c) {
 
 // VOID KeQuerySystemTime(PLARGE_INTEGER) (128): 100 ns since 1601, UTC.
 void ke_query_system_time(rt::Context& c) {
-    const int64_t unix_100ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   std::chrono::system_clock::now().time_since_epoch()).count() / 100;
-    rt::st64(mem(c), arg(c, 0), uint64_t(unix_100ns + 116444736000000000LL), 0);
+    rt::st64(mem(c), arg(c, 0), uint64_t(clock::system_time()), 0);
     ret(c, c.eax, 4);
 }
 

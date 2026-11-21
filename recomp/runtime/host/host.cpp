@@ -1,4 +1,5 @@
 #include "host.hpp"
+#include "clock.hpp"
 #include "strf.hpp"
 
 #include <atomic>
@@ -379,8 +380,8 @@ std::vector<void (*)(rt::Context&)>& idle_hooks() {
 void add_idle_hook(void (*hook)(rt::Context&)) { idle_hooks().push_back(hook); }
 
 void idle(rt::Context& c) {
-    static auto last = std::chrono::steady_clock::now();
-    const auto now = std::chrono::steady_clock::now();
+    static auto last = clock::now();
+    const auto now = clock::now();
     if (now - last < std::chrono::milliseconds(16)) return;
     last = now;
     for (auto hook : idle_hooks()) hook(c);

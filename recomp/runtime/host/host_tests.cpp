@@ -1,6 +1,7 @@
 // Tests for the runtime's host side; no game files needed.
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <cstdio>
 #include <string>
 
+#include "clock.hpp"
 #include "crypto.hpp"
 #include "strf.hpp"
 #include "host.hpp"
@@ -327,6 +329,23 @@ int main() {
         CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 0 && get64(back) == 0x1234);
         std::memcpy(g.ram.get() + fields, bad2, 16);
         CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 0);
+    }
+
+    // Virtual time (last: it can't be switched off): still until the guest
+    // moves it, by work and by jumps, never back; the system time from
+    // 2001-11-15 (100 ns since 1601); rdtsc's reads cost a little each.
+    {
+        host::clock::use_virtual();
+        const auto t0 = host::clock::now();
+        CHECK(host::clock::is_virtual() && host::clock::now() == t0);
+        host::clock::spend(std::chrono::microseconds(3));
+        CHECK(host::clock::now() - t0 == std::chrono::microseconds(3));
+        host::clock::advance_to(t0 + std::chrono::milliseconds(10));
+        host::clock::advance_to(t0 + std::chrono::milliseconds(5));  // no going back
+        CHECK(host::clock::now() - t0 == std::chrono::milliseconds(10));
+        CHECK(host::clock::system_time() == 126502560000000000LL + 10 * 10000);
+        const uint64_t a = rt::rdtsc(0), b = rt::rdtsc(0);
+        CHECK(b > a && b - a < 1000);  // 20 ns of work at 733 MHz: about 15 ticks
     }
 
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);

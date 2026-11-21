@@ -4,6 +4,15 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-21
+
+Repeatable runs: virtual time.
+
+### Added
+- **`qilin_run --virtual-time`**: the runtime's time moves only as the game runs (to the next wake-up when every thread waits, and a little for each loop iteration and `rdtsc`), not by the host's clock, so a run with the same presses goes the same way every time, frame for frame, however fast the host is. Two runs from power-on to the title screen gave 2,400 identical frames. One clock (`host/clock.*`) now behind every reader of time: the scheduler (whose clock thread's work is done by the idle processor in virtual time), the kernel's tick count and system time, `rdtsc`, the vblanks, DirectSound. Without the option nothing changes. `docs/runtime.md` has the design.
+- With it, a script rides out into the stable yard, walks to the stable hand and talks to her (`CLAUDE.md` has the presses).
+- `QILIN_TRACE_DETAIL` also prints stage 0's texture transform and the vertex format.
+
 ## [0.9.1] - 2026-11-21
 
 All four mini-games play through to their results screens; lit scenes are no longer twice as bright.
