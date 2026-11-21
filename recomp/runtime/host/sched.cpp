@@ -531,15 +531,47 @@ void ps_terminate_system_thread(rt::Context& c) {
 }
 
 // NTSTATUS NtCreateEvent(PHANDLE, POBJECT_ATTRIBUTES, EVENT_TYPE, BOOLEAN InitialState) (189)
+// Named events (OBJECT_ATTRIBUTES: RootDirectory, ObjectName, Attributes):
+// kept by their directory and name, lower-cased. Creating one that exists
+// opens it: a handle to the same object, with STATUS_OBJECT_NAME_EXISTS, as
+// the kernel answers (Win32's CreateEvent then reports ERROR_ALREADY_EXISTS).
+// Objects are never freed here, so a name stays for the run.
+constexpr uint32_t kStatusObjectNameExists = 0x40000000;
+std::map<std::string, uint32_t>& named_objects() {  // under s().mu
+    static std::map<std::string, uint32_t> m;
+    return m;
+}
+std::string object_key(rt::Context& c, uint32_t oa) {
+    const rt::Mem m{c.mem, c.mem_size};
+    const uint32_t name = ld(c, oa + 4), len = rt::ld16(m, name, 0), buf = ld(c, name + 4);
+    std::string key = strf("%08X:", ld(c, oa));
+    for (uint32_t k = 0; k < len; ++k) {
+        const char ch = char(rt::ld8(m, buf + k, 0));
+        key += ch >= 'A' && ch <= 'Z' ? char(ch - 'A' + 'a') : ch;
+    }
+    return key;
+}
+
 void nt_create_event(rt::Context& c) {
     const uint32_t ph = arg(c, 0), oa = arg(c, 1), type = arg(c, 2), initial = arg(c, 3) & 0xFF;
-    if (oa && ld(c, oa + 4)) unsupported(189, "NtCreateEvent: a named event");
-    uint32_t o;
+    const uint8_t kind = uint8_t(type ? kSynchronizationEvent : kNotificationEvent);
+    const bool named = oa && ld(c, oa + 4);
+    const std::string key = named ? object_key(c, oa) : std::string();
+    uint32_t o, existing = 0;
     {
         std::lock_guard lk(s().mu);
-        o = pool_alloc(16);
+        if (named)
+            if (const auto it = named_objects().find(key); it != named_objects().end()) existing = it->second;
+        o = existing ? existing : pool_alloc(16);
+        if (named && !existing) named_objects()[key] = o;
     }
-    init_header(o, uint8_t(type ? kSynchronizationEvent : kNotificationEvent), 4, initial ? 1 : 0);
+    if (existing) {
+        if (rt::ld8(rt::Mem{c.mem, c.mem_size}, existing, 0) != kind) unsupported(189, "NtCreateEvent: the name belongs to an object of another type");
+        st(c, ph, new_handle(existing));
+        ret(c, kStatusObjectNameExists, 16);
+        return;
+    }
+    init_header(o, kind, 4, initial ? 1 : 0);
     st(c, ph, new_handle(o));
     ret(c, kStatusSuccess, 16);
 }
@@ -547,11 +579,21 @@ void nt_create_event(rt::Context& c) {
 // NTSTATUS NtCreateMutant(PHANDLE, POBJECT_ATTRIBUTES, BOOLEAN InitialOwner) (192)
 void nt_create_mutant(rt::Context& c) {
     const uint32_t ph = arg(c, 0), oa = arg(c, 1), owner = arg(c, 2) & 0xFF;
-    if (oa && ld(c, oa + 4)) unsupported(192, "NtCreateMutant: a named mutant");
-    uint32_t o;
+    const bool named = oa && ld(c, oa + 4);
+    const std::string key = named ? object_key(c, oa) : std::string();
+    uint32_t o, existing = 0;
     {
         std::lock_guard lk(s().mu);
-        o = pool_alloc(0x20);
+        if (named)
+            if (const auto it = named_objects().find(key); it != named_objects().end()) existing = it->second;
+        o = existing ? existing : pool_alloc(0x20);
+        if (named && !existing) named_objects()[key] = o;
+    }
+    if (existing) {  // opened, not created: the caller doesn't own it, whatever it asked
+        if (rt::ld8(rt::Mem{c.mem, c.mem_size}, existing, 0) != kMutant) unsupported(192, "NtCreateMutant: the name belongs to an object of another type");
+        st(c, ph, new_handle(existing));
+        ret(c, kStatusObjectNameExists, 12);
+        return;
     }
     init_header(o, kMutant, 8, owner ? 0 : 1);
     st(c, o + kMutantOwner, owner && t_self ? t_self->kthread : 0);

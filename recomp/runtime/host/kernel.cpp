@@ -311,6 +311,34 @@ void ex_query_non_volatile_setting(rt::Context& c) {
     if (index == 0x009 && it != std::end(kSettings)) it->value = g_audio_flags;
     if (index == 0x007 && it != std::end(kSettings)) it->value = g_language;
     if (index == 0x008 && it != std::end(kSettings)) it->value = g_widescreen ? 0x00410000u : 0x00400000u;
+    if (index == 0xFF) {
+        // XC_MAX_OS: the whole user section of the settings, as the EEPROM
+        // keeps it (XAPI's GetTimeZoneInformation reads the time zone from
+        // it): checksum, time zone bias, standard and daylight names, their
+        // change dates and biases, language, video and audio flags, parental
+        // controls, and the network settings, 0x60 bytes. Built from the same
+        // values the single settings return; the time zone is UTC with no
+        // daylight saving, and what has no single setting is zero.
+        constexpr uint32_t kUserSection = 0x60;
+        if (len < kUserSection) {
+            ret(c, 0xC0000023, 20);  // STATUS_BUFFER_TOO_SMALL
+            return;
+        }
+        auto setting = [](uint32_t i) {
+            const auto s = std::ranges::find(kSettings, i, &Setting::index);
+            return s != std::end(kSettings) ? s->value : 0u;
+        };
+        for (uint32_t k = 0; k < kUserSection; k += 4) st(c, value + k, 0);
+        st(c, value + 0x30, g_language);
+        st(c, value + 0x34, g_widescreen ? 0x00410000u : 0x00400000u);
+        st(c, value + 0x38, g_audio_flags);
+        st(c, value + 0x3C, setting(0x00A));
+        st(c, value + 0x44, setting(0x00C));
+        if (ptype) st(c, ptype, 3);  // REG_BINARY
+        if (plen) st(c, plen, kUserSection);
+        ret(c, kStatusSuccess, 20);
+        return;
+    }
     if (it == std::end(kSettings)) {
         static std::string why;
         why = strf("ExQueryNonVolatileSetting: setting %#x isn't modelled yet", index);
@@ -338,7 +366,7 @@ constexpr StatusMap kDosErrors[] = {
     {0xC0000002, 1},   {0xC0000008, 6},   {0xC000000D, 87},  {0xC000000F, 2},   {0xC0000010, 1},
     {0xC0000011, 38},  {0xC0000017, 8},   {0xC0000018, 487}, {0xC0000022, 5},   {0xC0000023, 122},
     {0xC0000033, 123}, {0xC0000034, 2},   {0xC0000035, 183}, {0xC000003A, 3},   {0xC0000043, 32},
-    {0xC000007F, 112}, {0xC00000A0, 487}, {0xC00000BA, 5},   {0xC0000101, 145}, {0xC0000103, 267},
+    {0xC000007F, 112}, {0xC00000A0, 487}, {0xC00000A2, 19}, {0xC00000BA, 5},   {0xC0000101, 145}, {0xC0000103, 267},
     {0xC0000120, 995},
 };
 void rtl_nt_status_to_dos_error(rt::Context& c) {
@@ -456,6 +484,68 @@ void ke_query_system_time(rt::Context& c) {
     ret(c, c.eax, 4);
 }
 
+// TIME_FIELDS: Year, Month (1-12), Day, Hour, Minute, Second, Millisecond,
+// Weekday (0 Sunday), each a SHORT. Times are 100 ns since 1601-01-01, a
+// Monday, in the proleptic Gregorian calendar.
+constexpr int64_t kTicksPerMs = 10000, kMsPerDay = 86400000;
+// Days from 1601-01-01 to the given date (Howard Hinnant's civil-days algorithm, shifted).
+int64_t days_from_civil(int64_t y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = unsigned(y - era * 400);
+    const unsigned doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + int64_t(doe) - 584694;  // 584694: 0000-03-01 to 1601-01-01
+}
+
+// VOID RtlTimeToTimeFields(PLARGE_INTEGER Time, PTIME_FIELDS) (305)
+void rtl_time_to_time_fields(rt::Context& c) {
+    const rt::Mem m = mem(c);
+    const int64_t t = int64_t(rt::ld64(m, arg(c, 0), 0));
+    if (t < 0) rt::trap(kernel_addr(305), "RtlTimeToTimeFields: a time before 1601 isn't modelled");
+    const uint32_t f = arg(c, 1);
+    const int64_t ms = t / kTicksPerMs, days = ms / kMsPerDay;
+    const uint32_t in_day = uint32_t(ms % kMsPerDay);
+    // Civil date from days since 1601-01-01 (the same algorithm, inverted).
+    const int64_t z = days + 584694;
+    const int64_t era = z / 146097;
+    const unsigned doe = unsigned(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    const unsigned day = doy - (153 * mp + 2) / 5 + 1, month = mp < 10 ? mp + 3 : mp - 9;
+    const int64_t year = int64_t(yoe) + era * 400 + (month <= 2);
+    rt::st16(m, f + 0, uint16_t(year), 0);
+    rt::st16(m, f + 2, uint16_t(month), 0);
+    rt::st16(m, f + 4, uint16_t(day), 0);
+    rt::st16(m, f + 6, uint16_t(in_day / 3600000), 0);
+    rt::st16(m, f + 8, uint16_t(in_day / 60000 % 60), 0);
+    rt::st16(m, f + 10, uint16_t(in_day / 1000 % 60), 0);
+    rt::st16(m, f + 12, uint16_t(in_day % 1000), 0);
+    rt::st16(m, f + 14, uint16_t((days + 1) % 7), 0);  // 1601-01-01 was a Monday
+    ret(c, c.eax, 8);
+}
+
+// BOOLEAN RtlTimeFieldsToTime(PTIME_FIELDS, PLARGE_INTEGER Time) (304):
+// FALSE, and nothing stored, for fields that aren't a date and time.
+void rtl_time_fields_to_time(rt::Context& c) {
+    const rt::Mem m = mem(c);
+    const uint32_t f = arg(c, 0);
+    auto field = [&](uint32_t k) { return int32_t(int16_t(rt::ld16(m, f + 2 * k, 0))); };
+    const int32_t year = field(0), month = field(1), day = field(2), hour = field(3), minute = field(4), second = field(5), milli = field(6);
+    static constexpr int kDays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    if (year < 1601 || month < 1 || month > 12 || day < 1 || day > kDays[month - 1] + (month == 2 && leap) || hour < 0 || hour > 23 ||
+        minute < 0 || minute > 59 || second < 0 || second > 59 || milli < 0 || milli > 999) {
+        ret(c, 0, 8);
+        return;
+    }
+    const int64_t days = days_from_civil(year, unsigned(month), unsigned(day));
+    const int64_t ms = days * kMsPerDay + int64_t(hour) * 3600000 + minute * 60000 + second * 1000 + milli;
+    rt::st64(m, arg(c, 1), uint64_t(ms * kTicksPerMs), 0);
+    ret(c, 1, 8);
+}
+
 // ---------------------------------------------------------------- XBE sections
 // XBEIMAGE_SECTION: Flags, VirtualAddress, VirtualSize, FileAddress, FileSize,
 // SectionName, SectionReferenceCount (+0x18), HeadSharedPageReferenceCount
@@ -557,6 +647,8 @@ constexpr KernelFn kKernel[] = {
     {"RtlCompareMemoryUlong", 12, rtl_compare_memory_ulong},
     {"RtlRaiseException", 4, rtl_raise_exception},
     {"KeQuerySystemTime", 4, ke_query_system_time},
+    {"RtlTimeToTimeFields", 8, rtl_time_to_time_fields},
+    {"RtlTimeFieldsToTime", 8, rtl_time_fields_to_time},
     {"RtlInitializeCriticalSection", 4, rtl_initialize_critical_section},
     {"RtlEnterCriticalSection", 4, rtl_enter_critical_section},
     {"RtlLeaveCriticalSection", 4, rtl_leave_critical_section},

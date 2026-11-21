@@ -282,6 +282,43 @@ int main() {
         CHECK(mmx::add<uint32_t>(0xFFFF'FFFF'0000'0001ull, 0x0000'0001'0000'0001ull) == 0x0000'0000'0000'0002ull);
     }
 
+    // Times and their fields (RtlTimeToTimeFields, RtlTimeFieldsToTime).
+    {
+        host::register_kernel();
+        Guest g;
+        const uint32_t time = g.alloc(8), fields = g.alloc(16), back = g.alloc(8);
+        auto put64 = [&](uint32_t a, uint64_t value) { std::memcpy(g.ram.get() + a, &value, 8); };
+        auto get64 = [&](uint32_t a) { uint64_t value; std::memcpy(&value, g.ram.get() + a, 8); return value; };
+        auto field = [&](uint32_t k) { uint16_t value; std::memcpy(&value, g.ram.get() + fields + 2 * k, 2); return unsigned(value); };
+        auto is = [&](unsigned y, unsigned mo, unsigned d, unsigned h, unsigned mi, unsigned s, unsigned ms, unsigned wd) {
+            return field(0) == y && field(1) == mo && field(2) == d && field(3) == h && field(4) == mi && field(5) == s && field(6) == ms && field(7) == wd;
+        };
+        put64(time, 0);
+        g.call("RtlTimeToTimeFields", {time, fields});
+        CHECK(is(1601, 1, 1, 0, 0, 0, 0, 1));  // a Monday
+        put64(time, 116444736000000000ull);    // the Unix epoch
+        g.call("RtlTimeToTimeFields", {time, fields});
+        CHECK(is(1970, 1, 1, 0, 0, 0, 0, 4));  // a Thursday
+        put64(time, 116444736000000000ull + 951782399ull * 10000000ull + 9990000ull);  // 2000-02-28 23:59:59.999
+        g.call("RtlTimeToTimeFields", {time, fields});
+        CHECK(is(2000, 2, 28, 23, 59, 59, 999, 1));
+        CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 1 && get64(back) == get64(time));
+        put64(time, get64(time) + 10000);  // a millisecond later: the leap day of a year divisible by 400
+        g.call("RtlTimeToTimeFields", {time, fields});
+        CHECK(is(2000, 2, 29, 0, 0, 0, 0, 2));
+        CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 1 && get64(back) == get64(time));
+        put64(time, 116444736000000000ull + 1064594583ull * 10000000ull);  // 2003-09-26 16:43:03, a Friday
+        g.call("RtlTimeToTimeFields", {time, fields});
+        CHECK(is(2003, 9, 26, 16, 43, 3, 0, 5));
+        // Not a date: 1900 had no 29 February; month 13.
+        const uint16_t bad1[8] = {1900, 2, 29, 0, 0, 0, 0, 0}, bad2[8] = {2003, 13, 1, 0, 0, 0, 0, 0};
+        put64(back, 0x1234);
+        std::memcpy(g.ram.get() + fields, bad1, 16);
+        CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 0 && get64(back) == 0x1234);
+        std::memcpy(g.ram.get() + fields, bad2, 16);
+        CHECK((g.call("RtlTimeFieldsToTime", {fields, back}) & 0xFF) == 0);
+    }
+
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
     else std::printf("all host tests passed\n");
     return failures != 0;

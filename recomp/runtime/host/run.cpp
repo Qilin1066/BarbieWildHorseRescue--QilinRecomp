@@ -186,7 +186,10 @@ int main(int argc, char** argv) {
     host::virtual_memory().init(c.mem, mm.ram_size, rt::kVirtualLimit, true);
 
     host::register_kernel();
-    if (supported) host::register_game_natives();
+    if (supported) {
+        host::register_game_natives();
+        host::register_xinput(nullptr);  // no window yet, so no controllers: every port is empty
+    }
     std::filesystem::path disc = game_dir ? std::filesystem::path(game_dir)
                                  : std::filesystem::is_directory(path) ? std::filesystem::path(path)
                                                                        : std::filesystem::path(path).parent_path();

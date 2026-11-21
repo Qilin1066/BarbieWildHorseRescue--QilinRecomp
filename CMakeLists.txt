@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.5.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.6.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -236,9 +236,9 @@ add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 # analysis (they are registered at addresses in the game's XBE).
 add_library(qilin_host STATIC recomp/runtime/host/host.cpp recomp/runtime/host/kernel.cpp recomp/runtime/host/kernel_crypto.cpp
                               recomp/runtime/host/sched.cpp recomp/runtime/host/kernel_io.cpp recomp/runtime/host/call_guest.cpp
-                              recomp/runtime/host/guest_ram.cpp recomp/runtime/host/tsc.cpp recomp/runtime/host/game_native.cpp)
+                              recomp/runtime/host/guest_ram.cpp recomp/runtime/host/tsc.cpp recomp/runtime/host/game_native.cpp recomp/runtime/host/xinput.cpp)
 target_include_directories(qilin_host PUBLIC recomp/runtime/host PRIVATE recomp/src)
-target_link_libraries(qilin_host PUBLIC qilin_runtime PRIVATE qilin_warnings)
+target_link_libraries(qilin_host PUBLIC qilin_runtime qilin_platform PRIVATE qilin_warnings)
 add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp)
 target_link_libraries(qilin_host_tests PRIVATE qilin_host qilin_warnings)
 add_test(NAME qilin_host_tests COMMAND qilin_host_tests)

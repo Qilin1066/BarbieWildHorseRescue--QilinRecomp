@@ -2,6 +2,16 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.6.0] - 2026-11-21
+
+The game runs through start-up into its engine, up to the sound system: the stop is now `DirectSoundCreate`, by name.
+
+### Added
+- The XDK library functions named (`recomp/runtime/host/xdk_symbols.inc`, 322 symbols of XDK 5558, by XbSymbolDatabase): the runtime's stops and the list of what lifted code calls in the replaced libraries now read as names (`docs/code-analysis.md`: 48 Direct3D functions, 27 DirectSound, 6 XMV, 2 memory-unit calls).
+- The controller library natively (`recomp/runtime/host/xinput.cpp`, from GBTGhoulies--QilinRecomp, found by name in this build): `XInitDevices`, `XGetDevices`, `XGetDeviceChanges`, `XInputOpen`, `XInputClose`, `XInputGetState`, `XInputSetState`. Memory units, microphones and headphones, which the engine also asks about, are reported as not plugged in. No window yet, so every port is empty.
+- Kernel: `RtlTimeToTimeFields` and `RtlTimeFieldsToTime` (tested), the settings' whole user section (`ExQueryNonVolatileSetting` index `0xFF`), named events and mutants (creating one that exists opens it), and the Win32 error for a write-protected volume.
+- The replaced libraries' seven static initializers are lifted, so the C runtime's start-up runs its tables whole.
+
 ## [0.5.0] - 2026-11-21
 
 Every function lifts, the lifted game compiles, and it starts: XAPI's entry point runs natively and creates the title's main thread, which runs to its first call into a hardware library.

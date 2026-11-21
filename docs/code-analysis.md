@@ -62,16 +62,38 @@ The same hand-written assembly as the sister game's C runtime, at other addresse
 
 `rdtsc` (XAPI's `QueryPerformanceCounter` at `0x14FFF7`, the engine's timers at `0x0F6026`–`0x0F60F4`) is lifted and reads the runtime's 733 MHz counter.
 
-## The first run
-The lifted game compiles (34 generated files; about six minutes with GCC 14 at `-O2` on two cores, no warnings from the generated code's own build) and starts:
+## The library functions by name
+`tools/gen/xdk_symbols.py` ran XbSymbolDatabase (MIT, commit `20eced5`) on the executable: **322 symbols** of XDK 5558 named (`recomp/runtime/host/xdk_symbols.inc`): 151 in Direct3D, 102 in DirectSound, 62 in XAPI and the controller library, 6 in XGraphics. None in XMV.
+
+### What lifted code calls in the replaced libraries (the stubs)
+96 call targets have no lifted body. They are the work list for the hardware libraries:
+
+| Library | Count | Functions |
+|---|---|---|
+| Direct3D | 48 | `Direct3D_CreateDevice`, `D3DDevice_Swap`, `_Clear`, `_DrawVertices`, `_DrawVerticesUP`, `_SetVertexShader`, `_CreateVertexShader`, `_SetVertexShaderConstant1`/`4`/`NotInline`, `_SetShaderConstantMode`, `_SetStreamSource`, `_SetTexture`, `_SetPalette`, `_SetTransform`, `_SetMaterial`, `_SetLight`, `_LightEnable`, `_SetViewport`, `_SetRenderTarget`, `_GetBackBuffer2`, `_GetDepthStencilSurface2`, `_SetRenderState_Simple`/`FogColor`/`CullMode`/`TextureFactor`, `_SetTextureState_TexCoordIndex`, `_CreateTexture2`, `_GetDeviceCaps`, `_KickPushBuffer`, `_SetVerticalBlankCallback`, `_PersistDisplay`, `_Release`, the overlay calls (`_EnableOverlay`, `_UpdateOverlay`, `_GetOverlayUpdateStatus`: the movie player's), `D3DResource_Release`/`IsBusy`/`Register`/`BlockUntilNotBusy`, `D3DVertexBuffer_Lock2`, `D3DPalette_Lock2`, `D3DTexture_GetSurfaceLevel2`/`LockRect`, `D3D_GetDeviceCaps`, and three unnamed (`0x167250`, `0x174900`, `0x1749F0`) |
+| DirectSound | 27 | `DirectSoundCreate`, `DirectSoundDoWork`, `DirectSoundUseFullHRTF`, `IDirectSound_CreateSoundBuffer`/`GetCaps`/`GetSpeakerConfig`/`DownloadEffectsImage`/`CommitDeferredSettings`/`SetAllParameters`/`SetI3DL2Listener`/`Release`, `IDirectSoundBuffer_Play`/`Stop`/`GetStatus`/`GetCurrentPosition`/`SetBufferData`/`SetNotificationPositions`/`SetVolume`/`SetFrequency`/`SetPosition`/`SetVelocity`/`SetMinDistance`/`SetMaxDistance`/`SetRolloffCurve`/`Release`, `IDirectSoundStream_SetVolume`, and one unnamed (`0x1A5BC3`) |
+| XMV | 6 | unnamed: `0x1DAE6D`, `0x1DB3B1`, `0x1DB495`, `0x1DB502`, `0x1DB681`, `0x1DB6A0` |
+| Controller library | 9 | `XInitDevices` (through its jump at `0x20421F`), `XGetDevices`, `XGetDeviceChanges`, `XInputOpen`/`Close`/`GetState`/`SetState`: **provided since v0.6.0**; `XMountMUA`, `XUnmountMU`: not yet |
+| In `.text` | 6 | the four natives above (`OutputDebugStringA` among them), and `0x14F143` and `0x15FF41`, call targets in `libs` that are not functions to the discovery pass: to look at |
+
+The game draws through a small part of Direct3D: no index buffers, no `DrawIndexedVertices`, vertex shaders throughout (the engine generates them: `baGenerateShader`), palettes, and the overlay for movies.
+
+### Static initializers of replaced libraries
+The C runtime's start-up runs three tables of initializers (`0x231860`, `0x231870`, `0x2318AC`). Seven entries belong to libraries that are replaced, and each only stores into its library's own data: three of the controller library's (`0x2040BD`, `0x20B291`, `0x20B2C1`) and four of DirectSound's (`0x1A7153`, `0x1A715E`, `0x1AA01C`, `0x1AA027`). They are lifted (`game::kLiftedLibraryFunctions`), so start-up runs its tables as on the console.
+
+## The run so far
+The lifted game compiles (34 generated files; about six minutes with GCC 14 at `-O2` on two cores) and starts. With v0.6.0:
 
 ```
-qilin_run: 64 MB of guest RAM, 83 replacements registered; calling the entry point at 000EA60F
+qilin_run: 64 MB of guest RAM, 93 replacements registered; calling the entry point at 000EA60F
 qilin_run: thread 2 started (000EA59B, priority 8)
 qilin_run: the entry point returned 1
-qilin: stopped at 002040BD: no replacement for XPP code at 002040BD, called from 000EBD55
+qilin_run: thread 3 started (00118460, priority 8)
+qilin: stopped at 001A6E77: no replacement for DSOUND DirectSoundCreate (001A6E77), called from 00119C8B
 ```
 
-XAPI's entry point, lifted, creates the title's main thread through the runtime's kernel and returns; the main thread runs XAPI's start-up as far as its first call into a library that drives hardware (XPP, the controller library), where it stops by name. That is the boundary the next work starts from: the 96 stubs are the list.
+XAPI's entry point creates the title's main thread and returns. The main thread runs XAPI's and the C runtime's start-up (initializer tables, heap, time zone, drive letters), enters the game's `main` and the engine's start-up: its heap, its background loader's thread (thread 3), its input (the controller library, natively), a write test on the disc that fails as it should, and then its sound start-up (`bInitSpecificWave`), where it asks for DirectSound and is stopped by name.
+
+What each earlier stop needed, in order: the replaced libraries' static initializers lifted; the settings' whole user section (`ExQueryNonVolatileSetting` index `0xFF`, read by `GetTimeZoneInformation`); `RtlTimeToTimeFields`; named events and mutants; the controller library; the Win32 error for a write-protected volume.
 
 The differential test (lifted code against the original x86) has not run yet, so "lifts" and "runs this far" are not yet "computes the same".

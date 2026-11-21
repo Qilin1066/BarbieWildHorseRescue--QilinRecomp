@@ -46,7 +46,13 @@ inline const std::vector<Range> kLibraries = {
 };
 // Single functions of natively replaced libraries that are lifted all the
 // same (pure computation whose exact results matter).
-inline const std::vector<uint32_t> kLiftedLibraryFunctions = {};
+inline const std::vector<uint32_t> kLiftedLibraryFunctions = {
+    // Static initializers of the replaced libraries, which the C runtime's
+    // start-up calls from its table (0x231870): each only stores into its
+    // library's own data (docs/code-analysis.md).
+    0x2040BD, 0x20B291, 0x20B2C1,            // XPP: its device-type tables and two static objects
+    0x1A7153, 0x1A715E, 0x1AA01C, 0x1AA027,  // DirectSound: pointers to four static objects
+};
 // Entry points the runtime calls itself.
 inline const std::vector<uint32_t> kStartupRoots = {};
 // Functions inside lifted regions that belong to a replaced library and that

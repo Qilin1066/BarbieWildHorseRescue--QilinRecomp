@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs until its first call into a library that drives hardware (the controller library), where the runtime stops and names it. Replacing those libraries (controllers, Direct3D, DirectSound, the XMV player) is the work ahead. The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
+**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs XAPI's and the C runtime's start-up, the game's `main` and the engine's own start-up (heap, background loader, input) until it asks for DirectSound, where the runtime stops and names it (v0.6.0). The controller library is replaced natively; DirectSound, Direct3D and the XMV player are the work ahead (`docs/code-analysis.md` lists the 83 functions the game calls in them). The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
@@ -21,8 +21,9 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | Differential test of every lifted function against the original x86 | to do, with the game |
 | Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
-| Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it (v0.5.0) and stops at its first hardware library call; three test programs go from XBE through the lifter to native programs and run in CI |
-| Direct3D, DirectSound and the controller library over those layers | to do: they depend on the game's XDK build |
+| Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it and runs into its engine (v0.6.0); three test programs go from XBE through the lifter to native programs and run in CI |
+| The controller library | ✅ natively, found by name in this XDK build (no window yet, so no controller is plugged in) |
+| DirectSound, Direct3D, the XMV player | to do: 27, 48 and 6 functions the game calls, named |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 
 ## Versions and changes
