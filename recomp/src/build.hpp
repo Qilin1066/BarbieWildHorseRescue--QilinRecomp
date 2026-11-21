@@ -21,5 +21,12 @@ inline constexpr std::string_view kTitle = "Barbie Horse Adventures: Wild Horse 
 inline const std::string kSha256 = "51e6aa2a064be35414866d1f048b184f174db749a3c65156211d5307d2bda7e4";
 
 // .text by region (game code, XAPI, the C runtime, middleware...).
-inline const std::vector<TextRegion> kTextRegions = {};
+// Evidence for each boundary: docs/code-analysis.md.
+inline const std::vector<TextRegion> kTextRegions = {
+    {"game", 0x11000, 0xE9BDC, true},          // the game: 16-byte entries, its source files' names in its assertions
+    {"xapi", 0xE9BDC, 0xEFC00, false},         // XAPI: unaligned, the entry point; lifted function by function
+    {"babel", 0xEFC00, 0x146506, true},        // Blitz Games' engine ("Babel"): 16-byte entries, bk/bd/ba functions, xb*.cpp
+    {"libs", 0x146506, 0x160130, false},       // the C runtime and more of XAPI (saves, soundtracks): unaligned; function by function
+    {"eh-funclets", 0x160130, 0x167098, true}, // the game's and engine's exception-handling funclets and handler stubs
+};
 }  // namespace qilin::game

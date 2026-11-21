@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.4.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.5.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -236,7 +236,7 @@ add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 # analysis (they are registered at addresses in the game's XBE).
 add_library(qilin_host STATIC recomp/runtime/host/host.cpp recomp/runtime/host/kernel.cpp recomp/runtime/host/kernel_crypto.cpp
                               recomp/runtime/host/sched.cpp recomp/runtime/host/kernel_io.cpp recomp/runtime/host/call_guest.cpp
-                              recomp/runtime/host/guest_ram.cpp)
+                              recomp/runtime/host/guest_ram.cpp recomp/runtime/host/tsc.cpp recomp/runtime/host/game_native.cpp)
 target_include_directories(qilin_host PUBLIC recomp/runtime/host PRIVATE recomp/src)
 target_link_libraries(qilin_host PUBLIC qilin_runtime PRIVATE qilin_warnings)
 add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp)
@@ -288,7 +288,7 @@ function(qilin_add_program name expect)
     target_include_directories(qilin_program_${name} PRIVATE ${gen})
     file(WRITE ${dir}/disc/HELLO.TXT "Hello from the disc.")
     add_test(NAME qilin_program_${name} COMMAND qilin_program_${name} --any-build --data-dir ${dir}/data ${dir}/disc)
-    set_tests_properties(qilin_program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expect}" TIMEOUT 60)
+    set_tests_properties(qilin_program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expect}" TIMEOUT 60 ENVIRONMENT "QILIN_EXIT_AFTER_ENTRY=1")
 endfunction()
 qilin_add_program(hello "the entry point returned 42")
 # "Hello from the disc.": 20 bytes, which add up to 1818.

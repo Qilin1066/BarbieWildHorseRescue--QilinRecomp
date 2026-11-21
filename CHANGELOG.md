@@ -2,10 +2,24 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-21
+
+Every function lifts, the lifted game compiles, and it starts: XAPI's entry point runs natively and creates the title's main thread, which runs to its first call into a hardware library.
+
+### Added
+- The regions of `.text` (`recomp/src/build.hpp`, evidence in the new `docs/code-analysis.md`): the game, XAPI, Blitz Games' engine ("Babel"), the C runtime with the rest of XAPI, and the exception-handling funclets. The game and the engine are lifted whole; the libraries function by function from the entry point.
+- The C runtime's conventions and the four functions replaced natively (`game.hpp`; `recomp/runtime/host/game_native.cpp` registers three of them), and the runtime's time-stamp counter (`tsc.cpp`).
+- Lifter: the one-operand 8-bit multiply, `xlat`, `sfence`, `fstp m80` and `fprem` (`rt::fprem`, tested).
+- `qilin_run` keeps its first thread after the entry point returns, as the host's housekeeping thread, so the threads the entry point created run on (`QILIN_EXIT_AFTER_ENTRY=1` ends the process there instead, for the test programs).
+
+### Changed
+- **6,621 functions lift, all of them**; the game region is 99.992% accounted for (67 unknown bytes), the engine and the funclets 100%.
+- Function discovery: reading a segment register (`mov`, `push`) marks data decoded as code; gaps are seeded again after validation drops a false seed.
+- The game's facts apply only to the supported build: an executable read with `--any-build` gets none of them.
 
 ### Fixed
 - **Every controller works the F1 menu**, not only the first one SDL lists (which can be a virtual pad or a wheel's base): Dear ImGui's SDL3 backend is set to read them all, as in the other QilinRecomp projects.
+
 
 ## [0.4.0] - 2026-11-21
 

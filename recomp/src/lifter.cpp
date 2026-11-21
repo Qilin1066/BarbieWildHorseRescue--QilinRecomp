@@ -477,6 +477,7 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
 
     switch (M) {
         case ZYDIS_MNEMONIC_NOP:
+        case ZYDIS_MNEMONIC_SFENCE:  // orders non-temporal stores: nothing to do for one guest thread at a time
         case ZYDIS_MNEMONIC_PREFETCHNTA: case ZYDIS_MNEMONIC_PREFETCHT0: case ZYDIS_MNEMONIC_PREFETCHT1:
         case ZYDIS_MNEMONIC_PREFETCHT2:
             return;
@@ -628,7 +629,22 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
         case ZYDIS_MNEMONIC_IMUL: case ZYDIS_MNEMONIC_MUL: {
             const int w = width(i, d);
             if (i.nops == 1) {  // edx:eax = eax * r/m32
-                if (w != 32) unsupported(i, "8/16-bit one-operand multiply");
+                if (w == 8) {  // ax = al * r/m8; CF = OF = the product doesn't fit in al
+                    use(EAX);
+                    mark(EAX);
+                    line("{");
+                    if (M == ZYDIS_MNEMONIC_IMUL) {
+                        line(std::format("const int32_t p = int32_t(int8_t(eax)) * int32_t(int8_t({}));", read(i, d, 8)));
+                        if (need & (CF | OF)) line("cf = of = p != int32_t(int8_t(p));");
+                    } else {
+                        line(std::format("const uint32_t p = (eax & 0xFFu) * uint32_t(uint8_t({}));", read(i, d, 8)));
+                        if (need & (CF | OF)) line("cf = of = (p >> 8) != 0;");
+                    }
+                    line("eax = (eax & 0xFFFF0000u) | (uint32_t(p) & 0xFFFFu);");
+                    line("}");
+                    return;
+                }
+                if (w != 32) unsupported(i, "16-bit one-operand multiply");
                 mark(EAX);
                 mark(EDX);
                 line("{");
@@ -687,6 +703,13 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
         }
         case ZYDIS_MNEMONIC_CDQ: use(EAX); mark(EDX); line("edx = uint32_t(int32_t(eax) >> 31);"); return;
         case ZYDIS_MNEMONIC_CWDE: mark(EAX); line("eax = uint32_t(int32_t(int16_t(eax)));"); return;
+        case ZYDIS_MNEMONIC_XLAT:  // al = [ebx + al]
+            if (i.address_width != 32) unsupported(i, "xlat with 16-bit addressing");
+            use(EAX);
+            use(EBX);
+            mark(EAX);
+            line(std::format("eax = (eax & ~0xFFu) | rt::ld8(m, ebx + (eax & 0xFFu), 0x{:X}u);", i.addr));
+            return;
         case ZYDIS_MNEMONIC_LAHF:
             mark(EAX);
             line("rt::set_hi8(eax, (uint32_t(sf) << 7) | (uint32_t(zf) << 6) | (uint32_t(af) << 4) | (uint32_t(pf) << 2) | 2u | uint32_t(cf));");
@@ -1360,8 +1383,10 @@ bool FnEmitter::emit_x87(const Insn& i, uint8_t need) {
                 line(std::format("rt::st32(m, {}, rt::fst32(ST(0u)), 0x{:X}u);", addr(i, d), i.addr));
             } else if (d.size == 64) {
                 line(std::format("rt::st64(m, {}, rt::dbits(ST(0u)), 0x{:X}u);", addr(i, d), i.addr));
+            } else if (d.size == 80 && pop) {  // fstp m80 (there is no fst m80): exact, every double is an extended real
+                line(std::format("rt::st80(m, {}, ST(0u), 0x{:X}u);", addr(i, d), i.addr));
             } else {
-                unsupported(i, "80-bit x87 store");
+                unsupported(i, "x87 store size");
             }
             if (pop) fpop();
             return true;
@@ -1404,6 +1429,10 @@ bool FnEmitter::emit_x87(const Insn& i, uint8_t need) {
             line("ST(0u) = rt::ftan(ST(0u)); fpsw &= ~0x600u;");
             fpush("1.0");
             line("} else { fpsw = (fpsw & ~0x200u) | 0x400u; }");
+            return true;
+        case ZYDIS_MNEMONIC_FPREM:  // st0 = st0 rem st1, the quotient truncated; C0 C3 C1 = its low bits, C2 clear (done)
+            mark_fx(FPSW);
+            line("ST(0u) = rt::fprem(ST(0u), ST(1u), fpsw);");
             return true;
         case ZYDIS_MNEMONIC_FPATAN:
             line("ST(1u) = rt::fpatan(ST(1u), ST(0u));");

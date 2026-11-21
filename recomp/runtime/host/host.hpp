@@ -191,6 +191,9 @@ void idle(rt::Context& c);
 uint64_t tsc_now();
 void add_idle_hook(void (*hook)(rt::Context&));
 
+// This game's natively replaced functions (game_native.cpp), for the supported build only.
+void register_game_natives();
+
 // XInput (xinput.cpp): the controller ports, over `input` (null: nothing plugged in).
 void register_xinput(platform::Input* input);
 // The kernel replacements, registered at kernel_addr(ordinal) (kernel.cpp).

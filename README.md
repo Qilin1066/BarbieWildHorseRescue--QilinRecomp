@@ -8,20 +8,20 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't run the game yet.** The tools have read it (v0.4.0, `docs/xbe-analysis.md`): 7,659 functions found, 97.958% of the game's code section accounted for, and 5,844 of its 5,899 functions lift to C++ on the first pass. None of that lifted code has been compiled or run yet. The recompiler core and the console-level part of the runtime (the kernel, the scheduler, the file system, the renderer, sound, window, input, the settings menu) come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
+**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs until its first call into a library that drives hardware (the controller library), where the runtime stops and names it. Replacing those libraries (controllers, Direct3D, DirectSound, the XMV player) is the work ahead. The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
 | Disc image reader (the Xbox DVD file system; a full-disc dump or the game partition alone) | ✅ tested on synthetic images, malformed ones included; `qilin disc`, `qilin extract` |
 | XBE loader (headers, certificate, sections, libraries, kernel thunks, flat image), the build recognised by SHA-256 | ✅ reads the game; the supported build is recorded |
 | x86 decoder (Zydis, vendored) | ✅ carried over; its cross-check against LLVM needs the game |
-| Function discovery and control flow (recursive descent, switch tables, C++ exception and SEH tables, data-as-code validation), byte coverage | ✅ 7,659 functions, 262 jump tables; 28,607 bytes of `.text` still unknown, 73 indirect jumps unresolved |
-| Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | 🔨 5,844 of 5,899 functions in `.text` lift; 55 to do (C runtime glue, MMX, a few instructions) |
-| What the analysis has established about the game (`recomp/src/game.hpp`) | 🔨 the build's identity; the regions of `.text`, alignment and conventions are next |
+| Function discovery and control flow (recursive descent, switch tables, C++ exception and SEH tables, data-as-code validation), byte coverage | ✅ 7,657 functions, 262 jump tables; the game region 99.992% accounted for (67 bytes unknown), the engine 100%; 73 indirect jumps unresolved |
+| Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | ✅ all 6,621 functions lift (the game and its engine whole, the libraries by reach); the output compiles |
+| What the analysis has established about the game (`recomp/src/game.hpp`) | ✅ the build's identity, the regions of `.text`, alignment, the C runtime's conventions, the native functions (`docs/code-analysis.md`) |
 | Differential test of every lifted function against the original x86 | to do, with the game |
 | Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
-| Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ carried over (v0.3.0), `qilin_run` new; three test programs go from XBE through the lifter to native programs and run in CI |
+| Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it (v0.5.0) and stops at its first hardware library call; three test programs go from XBE through the lifter to native programs and run in CI |
 | Direct3D, DirectSound and the controller library over those layers | to do: they depend on the game's XDK build |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 

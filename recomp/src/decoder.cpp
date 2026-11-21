@@ -54,6 +54,12 @@ const char* Insn::implausible_reason() const {
     if (nops >= 1 && op[0].kind == Operand::Kind::Reg && op[0].reg >= ZYDIS_REGISTER_ES &&
         op[0].reg <= ZYDIS_REGISTER_GS && (mnem == ZYDIS_MNEMONIC_MOV || mnem == ZYDIS_MNEMONIC_POP))
         return "segment register write";
+    // Reads of a segment register into a register or memory (mov r/m, sreg; push sreg):
+    // nothing in a title's code does it.
+    if (mnem == ZYDIS_MNEMONIC_MOV || mnem == ZYDIS_MNEMONIC_PUSH)
+        for (int k = 0; k < nops; ++k)
+            if (op[k].kind == Operand::Kind::Reg && op[k].reg >= ZYDIS_REGISTER_ES && op[k].reg <= ZYDIS_REGISTER_GS)
+                return "segment register read";
     // Undocumented shift alias: C0/C1/D0-D3 with ModRM.reg = 6 (SAL /6).
     if (opcode_map == ZYDIS_OPCODE_MAP_DEFAULT && (opcode == 0xC0 || opcode == 0xC1 || (opcode >= 0xD0 && opcode <= 0xD3)) &&
         modrm_reg == 6)

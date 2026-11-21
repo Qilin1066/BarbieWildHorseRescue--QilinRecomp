@@ -755,6 +755,20 @@ inline uint32_t fcom_codes(uint32_t sw, double a, double b) {
     return sw;
 }
 
+// fprem: a - q * b with q = a / b truncated, exactly (fmod), and the status
+// word's C0 C3 C1 = q's bits 2 1 0. The x87 reduces at most 63 exponent bits
+// a step and sets C2 while more remain; code loops on C2, so reducing fully
+// with C2 clear leaves the same value and the same quotient bits.
+inline double fprem(double a, double b, uint32_t& sw) {
+    sw &= ~0x4700u;
+    const double r = std::fmod(a, b);
+    if (r != r) return r;  // a NaN, an infinite dividend or a zero divisor
+    // |a| mod 8|b| less |a| mod |b| is 0 to 7 times |b| (8|b| may overflow to infinity: then |a| < 8|b| itself).
+    const double r8 = std::fabs(std::fmod(a, 8.0 * b));
+    const uint32_t q = uint32_t(std::llround((r8 - std::fabs(r)) / std::fabs(b))) & 7u;
+    return sw |= ((q & 4u) ? 0x0100u : 0u) | ((q & 2u) ? 0x4000u : 0u) | ((q & 1u) ? 0x0200u : 0u), r;
+}
+
 // minss/maxss: return the second operand if either is NaN or both are zero.
 inline uint32_t minss(uint32_t a, uint32_t b) { return f32(a) < f32(b) ? a : b; }
 inline uint32_t maxss(uint32_t a, uint32_t b) { return f32(a) > f32(b) ? a : b; }

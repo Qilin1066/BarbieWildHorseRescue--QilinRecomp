@@ -12,6 +12,7 @@
 //
 // Direct3D, DirectSound and the controller library are registered here when
 // they arrive (they depend on the game's XDK build: docs/roadmap...md step 3).
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -97,7 +98,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "qilin_run: %s\n", file.error().c_str());
         return 2;
     }
-    if (!game::kSha256.empty() && sha256_hex(*file) != game::kSha256 && !any_build) {
+    const bool supported = !game::kSha256.empty() && sha256_hex(*file) == game::kSha256;
+    if (!game::kSha256.empty() && !supported && !any_build) {
         std::fprintf(stderr, "qilin_run: this is not the supported build of %s (USA): its SHA-256 is %s, not %s\n",
                      std::string(game::kTitle).c_str(), sha256_hex(*file).c_str(), game::kSha256.c_str());
         return 4;
@@ -172,9 +174,10 @@ int main(int argc, char** argv) {
 
     // Code regions, for naming what the game calls.
     std::vector<host::Region> regions;
-    for (const auto& r : game::kTextRegions) regions.push_back({r.lo, r.hi, r.name});
+    if (supported)
+        for (const auto& r : game::kTextRegions) regions.push_back({r.lo, r.hi, r.name});
     for (const auto& s : xbe.sections)
-        if (s.code && (s.name != ".text" || game::kTextRegions.empty())) regions.push_back({s.va, s.va + s.vsize, s.name});
+        if (s.code && (s.name != ".text" || !supported || game::kTextRegions.empty())) regions.push_back({s.va, s.va + s.vsize, s.name});
     host::set_regions(std::move(regions));
 
     // RAM between the image and the main stack, for contiguous memory.
@@ -183,6 +186,7 @@ int main(int argc, char** argv) {
     host::virtual_memory().init(c.mem, mm.ram_size, rt::kVirtualLimit, true);
 
     host::register_kernel();
+    if (supported) host::register_game_natives();
     std::filesystem::path disc = game_dir ? std::filesystem::path(game_dir)
                                  : std::filesystem::is_directory(path) ? std::filesystem::path(path)
                                                                        : std::filesystem::path(path).parent_path();
@@ -210,6 +214,15 @@ int main(int argc, char** argv) {
     if (c.ret_to != host::kReturnSentinel) rt::trap(xbe.entry, "the entry point returned somewhere else");
     std::printf("qilin_run: the entry point returned %u\n", c.eax);
     std::fflush(stdout);
-    // Other guest threads may be blocked on their host threads: no static destructors.
-    std::_Exit(0);
+    // On the console the kernel's start-up thread ends here and the threads
+    // the entry point created (XAPI's: the title's main thread) carry on.
+    // This thread is the host's first, which the window's events belong to
+    // (macOS), so it stays: it gives the processor up for good, waking only
+    // to do the host's housekeeping. QILIN_EXIT_AFTER_ENTRY=1 ends the
+    // process instead (the test programs, which create no thread).
+    if (const char* v = std::getenv("QILIN_EXIT_AFTER_ENTRY"); v && *v && *v != '0') std::_Exit(0);
+    for (;;) {
+        host::sched::sleep_until(host::sched::Clock::now() + std::chrono::milliseconds(10));
+        host::idle(c);
+    }
 }

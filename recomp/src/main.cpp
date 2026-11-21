@@ -60,13 +60,22 @@ using game::Replaced;
 
 namespace {
 
-// Everything specific to the game's build is in game.hpp.
-using game::kLibraries;
-using game::kNative;
-using game::kReplaced;
-using game::kStartupRoots;
+// Everything specific to the game's build is in game.hpp, and applies only
+// to that build: another executable (--any-build) gets none of it.
+bool g_supported = false;
+template <typename T>
+const std::vector<T>& only_supported(const std::vector<T>& v) {
+    static const std::vector<T> none;
+    return g_supported ? v : none;
+}
+const std::vector<Range>& libraries() { return only_supported(game::kLibraries); }
+const std::vector<Replaced>& natives() { return only_supported(game::kNative); }
+const std::vector<Replaced>& replaced_functions() { return only_supported(game::kReplaced); }
+const std::vector<uint32_t>& startup_roots() { return only_supported(game::kStartupRoots); }
+const std::vector<uint32_t>& lifted_library_functions() { return only_supported(game::kLiftedLibraryFunctions); }
+const std::vector<Range>& lifted_regions() { return only_supported(game::kLiftedRegions); }
 
-bool is_native(uint32_t a) { return std::ranges::any_of(kNative, [&](const Replaced& r) { return r.addr == a; }); }
+bool is_native(uint32_t a) { return std::ranges::any_of(natives(), [&](const Replaced& r) { return r.addr == a; }); }
 
 // Xbox kernel exports by ordinal (third_party/nxdk, CC0).
 struct KernelExport {
@@ -155,7 +164,7 @@ void emit(FILE* out, const Decoder& dec, const Insn& i) {
 // feed an indirect call from anywhere, so that counts too.
 std::vector<std::string> check_replaced(const Xbe& xbe, Decoder& dec, const Cfg& cfg, std::span<const uint32_t> lifted) {
     std::vector<std::string> out;
-    for (const Replaced& r : kReplaced) {
+    for (const Replaced& r : replaced_functions()) {
         if (!cfg.functions().contains(r.addr)) out.push_back(std::format("{:08X} is no longer a function", r.addr));
         for (uint32_t a : lifted) {
             const Function& fn = cfg.functions().at(a);
@@ -189,15 +198,16 @@ std::vector<std::string> check_replaced(const Xbe& xbe, Decoder& dec, const Cfg&
 std::vector<uint32_t> library_closure(const Xbe& xbe, Decoder& dec, const Cfg& cfg, std::span<const uint32_t> from) {
     const auto& fns = cfg.functions();
     auto in_lib = [](uint32_t a) {
-        return std::ranges::any_of(kLibraries, [&](const Range& r) { return a >= r.lo && a < r.hi; }) ||
-               std::ranges::contains(game::kLiftedLibraryFunctions, a);
+        return std::ranges::any_of(libraries(), [&](const Range& r) { return a >= r.lo && a < r.hi; }) ||
+               std::ranges::contains(lifted_library_functions(), a);
     };
     std::set<uint32_t> seen;
     std::vector<uint32_t> work;
     auto add = [&](uint32_t t) {
         if (in_lib(t) && !is_native(t) && fns.contains(t) && seen.insert(t).second) work.push_back(t);
     };
-    for (uint32_t r : kStartupRoots) add(r);
+    add(xbe.entry);  // qilin_run starts there
+    for (uint32_t r : startup_roots()) add(r);
     auto refs = [&](const Function& fn) {
         for (uint32_t t : fn.calls) add(t);
         for (uint32_t t : fn.tails) add(t);
@@ -227,7 +237,7 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
     auto outdir = opt(args, "--out");
     if (!outdir) return usage();
     // What is lifted whole: the regions the analysis has drawn, or until it has, all of .text.
-    std::vector<Range> ranges = game::kLiftedRegions;
+    std::vector<Range> ranges = lifted_regions();
     if (ranges.empty())
         for (const XbeSection& sec : xbe.sections)
             if (sec.name == ".text") ranges.push_back({sec.va, sec.file_end()});
@@ -242,15 +252,15 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
         only = parse_hex(*o);
         if (!only) return usage();
     }
-    auto replaced = [](uint32_t a) { return std::ranges::any_of(kReplaced, [&](const Replaced& r) { return r.addr == a; }); };
+    auto replaced = [](uint32_t a) { return std::ranges::any_of(replaced_functions(), [&](const Replaced& r) { return r.addr == a; }); };
     auto wanted = [&](uint32_t a) {
         if (only) return a == *only;
         return !replaced(a) && !is_native(a) && std::ranges::any_of(ranges, [&](const Range& r) { return a >= r.lo && a < r.hi; });
     };
 
-    Cfg cfg(xbe, dec, game::cfg_config(xbe));
+    Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
     cfg.run();
-    const Conventions conv = game::conventions();
+    const Conventions conv = g_supported ? game::conventions() : Conventions{};
     Lifter lifter(dec, &conv);
     const std::filesystem::path dir(*outdir);
     std::filesystem::create_directories(dir);
@@ -365,7 +375,7 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
     }
     if (!only) {
         size_t n = 0;
-        for (const Replaced& r : kReplaced)
+        for (const Replaced& r : replaced_functions())
             n += std::ranges::any_of(ranges, [&](const Range& g) { return r.addr >= g.lo && r.addr < g.hi; });
         if (n) std::println("  {} functions in these regions belong to a replaced library and aren't lifted", n);
         if (auto bad = check_replaced(xbe, dec, cfg, done); !bad.empty()) {
@@ -448,6 +458,7 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
     const Xbe& xbe = *loaded;
     const std::string hash = sha256_hex(file);
     const bool recorded = !game::kSha256.empty(), supported = recorded && hash == game::kSha256;
+    g_supported = supported;
     if (recorded && !supported && !flag(args, "--any-build")) {
         std::println(stderr,
                      "qilin: error: this is not the supported build of {} (USA).\n"
@@ -492,7 +503,7 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
     if (cmd == "align") {
         // Where directly-called functions start, modulo 16, per code section:
         // what game.hpp's aligned regions are drawn from.
-        Cfg cfg(xbe, dec, game::cfg_config(xbe));
+        Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
         cfg.run();
         std::set<uint32_t> called;
         for (auto& [a, fn] : cfg.functions()) called.insert(fn.calls.begin(), fn.calls.end());
@@ -514,14 +525,14 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
         return 0;
     }
     if (cmd == "cfg") {
-        Cfg cfg(xbe, dec, game::cfg_config(xbe));
+        Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
         cfg.run();
         std::print("{}", cfg.summary());
         if (auto p = opt(args, "--json")) write_file(std::string(*p), cfg.to_json());
         return 0;
     }
     if (cmd == "suspects") {
-        Cfg cfg(xbe, dec, game::cfg_config(xbe));
+        Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
         cfg.run();
         for (auto& s : cfg.suspects()) {
             const XbeSection* sec = xbe.code_section_at(s.start);
@@ -551,14 +562,14 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
                 }
             }
         } else {
-            Cfg cfg(xbe, dec, game::cfg_config(xbe));
+            Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
             cfg.run();
             for (uint32_t a : cfg.all_instructions()) emit(out.get(), dec, *dec.decode(a));
         }
         return 0;
     }
     if (cmd == "coverage") {
-        Cfg cfg(xbe, dec, game::cfg_config(xbe));
+        Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
         cfg.run();
         const bool list = flag(args, "--list");
         std::println("{:<12} {:>7} {:>9} {:>8} {:>8} {:>8}  {:>8}", "region", "lifted", "code", "tables", "padding", "UNKNOWN", "accounted");

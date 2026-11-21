@@ -828,6 +828,28 @@ int main(int argc, char** argv) {
         CHECK(v == 0x11223344u && edi == 28 && ecx == 0);
     }
 
+    // ---------------------------------------------------------------- fprem
+    {
+        auto rem = [](double a, double b, uint32_t* codes) {
+            uint32_t sw = 0xFFFFu;
+            const double r = rt::fprem(a, b, sw);
+            *codes = sw & 0x4700u;
+            CHECK((sw | 0x4700u) == 0xFFFFu);  // nothing else in the status word changes
+            return r;
+        };
+        uint32_t codes_ = 0;
+        // C0 (0x100) C3 (0x4000) C1 (0x200) = the truncated quotient's bits 2 1 0; C2 (0x400) clear.
+        CHECK(rem(7.0, 2.0, &codes_) == 1.0 && codes_ == (0x4000u | 0x0200u));           // q = 3
+        CHECK(rem(-7.0, 2.0, &codes_) == -1.0 && codes_ == (0x4000u | 0x0200u));         // the dividend's sign, |q| = 3
+        CHECK(rem(5.5, 1.0, &codes_) == 0.5 && codes_ == (0x0100u | 0x0200u));           // q = 5
+        CHECK(rem(1.0, 3.0, &codes_) == 1.0 && codes_ == 0u);                            // q = 0
+        CHECK(rem(64.0, 8.0, &codes_) == 0.0 && codes_ == 0u);                           // q = 8: its low three bits are 0
+        CHECK(rem(1e300, 3.0, &codes_) == std::fmod(1e300, 3.0) && !(codes_ & 0x0400u)); // reduced fully in one step
+        CHECK(rem(6.0, 1.7976931348623157e308, &codes_) == 6.0 && codes_ == 0u);         // 8 * b overflows
+        const double nan = rem(1.0, 0.0, &codes_);
+        CHECK(nan != nan);
+    }
+
     // ---------------------------------------------------------------- JSON
     {
         JsonWriter j;
@@ -841,12 +863,16 @@ int main(int argc, char** argv) {
     {
         // With nothing recorded about the build, the pass is told only what
         // the XBE says: all of .text is one lifted region, nothing is aligned.
-        const CfgConfig g = game::cfg_config(x);
+        const CfgConfig g = game::cfg_config(x, false);
         CHECK(g.dataptr_lo == 0x11000 && g.dataptr_hi == 0x11400);
-        if (game::kTextRegions.empty()) {
-            CHECK(g.text_regions.size() == 1 && g.text_regions[0].lifted && g.text_regions[0].lo == 0x11000);
-        }
-        CHECK(g.aligned_regions.size() == game::kAlignedRegions.size());
+        CHECK(g.text_regions.size() == 1 && g.text_regions[0].lifted && g.text_regions[0].lo == 0x11000);
+        CHECK(g.aligned_regions.empty());
+        // The supported build's facts: regions in order, without gaps, the lifted and aligned ones among them.
+        for (size_t k = 1; k < game::kTextRegions.size(); ++k) CHECK(game::kTextRegions[k].lo == game::kTextRegions[k - 1].hi);
+        for (const game::Range& r : game::kLiftedRegions)
+            CHECK(std::ranges::any_of(game::kTextRegions, [&](const TextRegion& t) { return t.lo == r.lo && t.hi == r.hi && t.lifted; }));
+        for (const game::Range& r : game::kAlignedRegions)
+            CHECK(std::ranges::any_of(game::kTextRegions, [&](const TextRegion& t) { return t.lo == r.lo && t.hi == r.hi; }));
         Decoder dec2(x);
         Cfg cfg2(x, dec2, g);
         cfg2.run();

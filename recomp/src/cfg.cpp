@@ -1054,59 +1054,73 @@ void Cfg::run() {
         std::ranges::sort(v);
         return v;
     };
-    auto ranges = data_ranges();
-    for (uint8_t round = 0; round < 6; ++round) {
-        std::vector<uint32_t> fresh;
-        for (auto& s : xbe_.sections) {
-            if (!s.code) continue;
-            for (uint32_t a = s.va, hi = s.file_end(); a < hi;) {
-                if (owned_.contains(a)) { a = dec_.decode(a)->end(); continue; }
-                const Insn* ins = dec_.decode(a);
-                if (!ins) { a += 1; continue; }
-                if (ins->is_pad() || is_pad_filler(*ins)) { a = ins->end(); continue; }
-                // Inside a known table? (ranges sorted by start; take the first that covers a)
-                std::optional<uint32_t> skip_to;
-                for (auto& [s0, e] : ranges) {
-                    if (s0 > a) break;
-                    if (a < e) { skip_to = e; break; }
-                }
-                if (skip_to) { a = *skip_to; continue; }
-                if (s.name == cfg_.gap_section && a % 16 == 0 && xbe_.mapped(a - 1)) {
-                    const uint8_t prevb = xbe_.u8(a - 1);
-                    // ...or right after a known table, which can end mid-alignment.
-                    const bool after_table = in_aligned_region(a) &&
-                                             std::ranges::any_of(ranges, [&](auto& r) { return r.first < a && a - 1 < r.second; });
-                    if (prevb == 0xCC || prevb == 0x90 || prevb == 0xC3 || after_table) {
-                        Explored r = explore(a, bound_of(a));
-                        bool clean = r.bad.empty() && r.overlap.empty() && r.insns.size() >= 3;
-                        bool has_exit = false;
-                        for (auto& [ia, i] : r.insns) {
-                            if (owned_.contains(ia) || is_zero_bytes_insn(*i)) clean = false;
-                            if (i->is_ret() || i->is_jmp()) has_exit = true;
-                        }
-                        if (clean && has_exit) fresh.push_back(a);
+    // Returns whether any function was added.
+    auto seed_gaps = [&] {
+        bool added = false;
+        auto ranges = data_ranges();
+        for (uint8_t round = 0; round < 6; ++round) {
+            std::vector<uint32_t> fresh;
+            for (auto& s : xbe_.sections) {
+                if (!s.code) continue;
+                for (uint32_t a = s.va, hi = s.file_end(); a < hi;) {
+                    if (owned_.contains(a)) { a = dec_.decode(a)->end(); continue; }
+                    const Insn* ins = dec_.decode(a);
+                    if (!ins) { a += 1; continue; }
+                    if (ins->is_pad() || is_pad_filler(*ins)) { a = ins->end(); continue; }
+                    // Inside a known table? (ranges sorted by start; take the first that covers a)
+                    std::optional<uint32_t> skip_to;
+                    for (auto& [s0, e] : ranges) {
+                        if (s0 > a) break;
+                        if (a < e) { skip_to = e; break; }
                     }
+                    if (skip_to) { a = *skip_to; continue; }
+                    if (s.name == cfg_.gap_section && a % 16 == 0 && xbe_.mapped(a - 1)) {
+                        const uint8_t prevb = xbe_.u8(a - 1);
+                        // ...or right after a known table, which can end mid-alignment.
+                        const bool after_table = in_aligned_region(a) &&
+                                                 std::ranges::any_of(ranges, [&](auto& r) { return r.first < a && a - 1 < r.second; });
+                        if (prevb == 0xCC || prevb == 0x90 || prevb == 0xC3 || after_table) {
+                            Explored r = explore(a, bound_of(a));
+                            bool clean = r.bad.empty() && r.overlap.empty() && r.insns.size() >= 3;
+                            bool has_exit = false;
+                            for (auto& [ia, i] : r.insns) {
+                                if (owned_.contains(ia) || is_zero_bytes_insn(*i)) clean = false;
+                                if (i->is_ret() || i->is_jmp()) has_exit = true;
+                            }
+                            if (clean && has_exit) fresh.push_back(a);
+                        }
+                    }
+                    a = (a + 4) & ~3u;
                 }
-                a = (a + 4) & ~3u;
             }
+            std::erase_if(fresh, [&](uint32_t n) { return funcs_.contains(n); });
+            if (fresh.empty()) break;
+            added = true;
+            cand_.insert(fresh.begin(), fresh.end());
+            run_queue({fresh.rbegin(), fresh.rend()}, Origin::Gap, round);
+            ranges = data_ranges();
         }
-        std::erase_if(fresh, [&](uint32_t n) { return funcs_.contains(n); });
-        if (fresh.empty()) break;
-        cand_.insert(fresh.begin(), fresh.end());
-        run_queue({fresh.rbegin(), fresh.rend()}, Origin::Gap, round);
-        ranges = data_ranges();
-    }
-    // Fixpoint: candidates left behind by dropped seeds still cut real
-    // functions short. Rebuild the boundaries from the surviving functions,
-    // re-explore, absorb, validate; repeat until nothing changes.
-    for (int round = 0; round < 8; ++round) {
-        const bool i = imm_round();
-        const bool a = absorb_fragments();
-        validate();
-        const bool l = drop_labels();
-        const bool r = reexplore_all();
-        if (!i && !a && !l && !r) break;
-    }
+        return added;
+    };
+    auto settle = [&] {
+        // Fixpoint: candidates left behind by dropped seeds still cut real
+        // functions short. Rebuild the boundaries from the surviving functions,
+        // re-explore, absorb, validate; repeat until nothing changes.
+        for (int round = 0; round < 8; ++round) {
+            const bool i = imm_round();
+            const bool a = absorb_fragments();
+            validate();
+            const bool l = drop_labels();
+            const bool r = reexplore_all();
+            if (!i && !a && !l && !r) break;
+        }
+    };
+    seed_gaps();
+    settle();
+    // A seed the validation dropped may have been hiding a real function in
+    // its gap (its bytes counted as owned while the gaps were seeded): seed
+    // the gaps again over what survived, until that finds nothing.
+    for (int pass = 0; pass < 4 && seed_gaps(); ++pass) settle();
     compute_gaps();
 }
 
