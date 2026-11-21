@@ -265,6 +265,35 @@ mad oPos.xyz, oPos.xyzz, r1.x, c-37.xyzz
         const gfx::Image im = r->read_back_buffer();
         CHECK(pixel_is(im, 5, 5, 0, 255, 0, 255));      // inside the triangle
         CHECK(pixel_is(im, 60, 40, 0, 0, 0, 255));      // outside
+        // The vertex unit's 0 × rsq(0) is 0, not NaN: oD0 = v3.x × rsq(v3.x)
+        // + v3.y with v3 = (0, 0.5, 0, 0) is 0.5 (IEEE's NaN is no grey).
+        {
+            gfx::vsh::Instruction rsq{};
+            rsq.ilu = gfx::vsh::Ilu::Rsq;
+            rsq.c.kind = gfx::vsh::Src::Input;
+            rsq.c.index = 3;
+            rsq.temp = 1;
+            rsq.ilu_temp_mask = 0x8;
+            gfx::vsh::Instruction mad = mov_d0;
+            mad.mac = gfx::vsh::Mac::Mad;
+            for (uint8_t& lane : mad.a.swizzle) lane = 0;
+            mad.b.kind = gfx::vsh::Src::Temp;
+            mad.b.index = 1;
+            for (uint8_t& lane : mad.b.swizzle) lane = 0;
+            mad.c = mov_d0.a;
+            for (uint8_t& lane : mad.c.swizzle) lane = 1;
+            gfx::vsh::Program zero;
+            zero.code = {mov_pos, rsq, mad};
+            const auto zvs = gfx::nv2a::vertex_program(zero, 0b1001);
+            const float zcol[3][4] = {{0, 0.5f, 0, 0}, {0, 0.5f, 0, 0}, {0, 0.5f, 0, 0}};
+            gfx::DrawCmd z = d;
+            z.vs_key = 3, z.vs_code = &zvs;
+            z.attributes[3] = &zcol[0][0];
+            r->clear(nullptr, 0, gfx::kClearColor, black, 1, 0);
+            r->draw(z);
+            const gfx::Image zi = r->read_back_buffer();
+            CHECK(pixel_is(zi, 5, 5, 128, 128, 128, 128) || pixel_is(zi, 5, 5, 127, 127, 127, 127));
+        }
         // A texture: a 2x2 checker sampled by PASSTHRU-free PROJECT2D at texel centres.
         gfx::TextureData t;
         t.width = t.height = 2;

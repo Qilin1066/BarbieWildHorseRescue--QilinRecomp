@@ -1855,6 +1855,16 @@ const Device::CachedTexture* stage_texture(rt::Context& c, Device& d, const char
             if (e.id) d.renderer->destroy_texture(e.id);
             e.id = d.renderer->create_texture(t);
         }
+        // QILIN_DUMP_TEXTURES=<folder>: each texture's first face and level as
+        // it's uploaded, decoded here, as <texel address>_<format>.pam.
+        if (static const char* dir = std::getenv("QILIN_DUMP_TEXTURES"); dir && *dir && e.texels.empty()) {
+            const gfx::TextureData im = gfx::decode_texture(shape, texels, shape.palettized ? palette : nullptr);
+            if (FILE* f = std::fopen(strf("%s/%08X_%02X.pam", dir, data, shape.color_format).c_str(), "wb")) {
+                std::fprintf(f, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", im.width, im.height);
+                std::fwrite(im.rgba.data(), 1, size_t(im.width) * im.height * 4, f);
+                std::fclose(f);
+            }
+        }
         e.texels.assign(texels, texels + shape.bytes);
         e.dims = t.dims(), e.linear = t.linear, e.width = t.width, e.height = t.height, e.depth = t.depth;
     }
@@ -2367,8 +2377,10 @@ void lighting_program(gfx::vsh::Program& p, const Lighting& l) {
         for (const char* q = m; *q; ++q) b |= uint8_t(*q == 'x' ? 8 : *q == 'y' ? 4 : *q == 'z' ? 2 : 1);
         return b;
     };
-    // One MAC operation into a temporary (or, with out >= 0, an output).
+    // One MAC operation into a temporary (or, with out >= 0, an output); for
+    // ADD the second operand given here goes in C, where ADD reads it (a + c).
     auto mac = [&](Mac op, uint8_t dst, const char* m, Arg a, Arg b = {}, Arg cc = {}, int out = -1) {
+        if (op == Mac::Add) std::swap(b, cc);
         Instruction in;
         in.mac = op, in.a = a.o, in.b = b.o, in.c = cc.o;
         const int reg = a.c >= 0 ? a.c : b.c >= 0 ? b.c : cc.c;
@@ -3151,13 +3163,35 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
                                  rs(kRsStencilFunc), rs(kRsStencilRef), rs(kRsStencilMask), rs(kRsStencilWriteMask), rs(kRsStencilFail),
                                  rs(kRsStencilZFail), rs(kRsStencilPass), rs(kRsAlphaFunc), rs(kRsAlphaRef), cs.combiner_count, cs.final_abcd,
                                  cs.final_efgh, cs.texture_modes, cs.input_texture, cs.dot_mapping);
+            {
+                auto fl = [&](uint32_t a) { return double(std::bit_cast<float>(ld(c, a))); };
+                const uint32_t m = kDeviceStorage + kDevMaterial;
+                x += strf("  lighting=%u colourvertex=%u sources=%u/%u/%u ambient=%08X material d=(%.3g %.3g %.3g) a=(%.3g %.3g %.3g) e=(%.3g %.3g %.3g)\n",
+                          rs(kRsLighting), rs(kRsColorVertex), rs(kRsDiffuseMaterialSource), rs(kRsAmbientMaterialSource),
+                          rs(kRsEmissiveMaterialSource), rs(kRsAmbient), fl(m), fl(m + 4), fl(m + 8), fl(m + 16), fl(m + 20), fl(m + 24),
+                          fl(m + 48), fl(m + 52), fl(m + 56));
+                {
+                    std::vector<float> k(4 * 192, 0.0f);
+                    if (rs(kRsLighting)) lighting_constants(c, lighting_of(c, "trace", ld(c, kDeviceStorage + kDevVertexShader + 4)), k.data());
+                    auto len = [&](int reg) { return std::sqrt(double(k[4 * reg]) * k[4 * reg] + double(k[4 * reg + 1]) * k[4 * reg + 1] + double(k[4 * reg + 2]) * k[4 * reg + 2]); };
+                    x += strf("  normalize=%u normal matrix rows' lengths %.4g %.4g %.4g\n", rs(kRsNormalizeNormals), len(kCNormal), len(kCNormal + 1), len(kCNormal + 2));
+                }
+                x += strf("  fog=%u table=%u range=%u start=%g end=%g density=%g colour=%08X\n", rs(kRsFogEnable), rs(kRsFogTableMode),
+                          rs(kRsRangeFogEnable), fl(kRenderStateTable + 4 * kRsFogStart), fl(kRenderStateTable + 4 * kRsFogEnd),
+                          fl(kRenderStateTable + 4 * kRsFogDensity), rs(kRsFogColor));
+                for (uint32_t k = 0; k < 8; ++k)
+                    if (const uint32_t rec = ld(c, kDeviceStorage + kDevLightSlots + 4 * k))
+                        x += strf("  light %u type %u d=(%.3g %.3g %.3g) a=(%.3g %.3g %.3g) dir=(%.3g %.3g %.3g)\n", k, ld(c, rec), fl(rec + 4),
+                                  fl(rec + 8), fl(rec + 12), fl(rec + 36), fl(rec + 40), fl(rec + 44), fl(rec + 0x40), fl(rec + 0x44), fl(rec + 0x48));
+            }
             for (uint32_t i = 0; i < 8 && i < (cs.combiner_count & 0xFF); ++i)
                 x += strf("  stage %u rgb %08X>%08X alpha %08X>%08X c0=%08X c1=%08X\n", i, cs.rgb_inputs[i], cs.rgb_outputs[i], cs.alpha_inputs[i],
                           cs.alpha_outputs[i], rs(kRsPsConstant0 + i), rs(kRsPsConstant1 + i));
             for (uint32_t i = 0; i < v.count && i < 4; ++i) {
                 x += strf("  v%u", i);
                 for (uint32_t n = 0; n < 16; ++n)
-                    if ((v.mask & (1u << n)) && v.attr[n].size() >= ((v.constant & (1u << n)) ? 0 : i * 4) + 4) {  // not those in the arena
+                    if ((v.mask & (1u << n)) && v.arena[n] == gfx::DrawCmd::kNoArena &&  // not those in the arena (QILIN_NO_VERTEX_CACHE=1 for them)
+                        v.attr[n].size() >= ((v.constant & (1u << n)) ? 0 : i * 4) + 4) {
                         const float* a = v.attr[n].data() + ((v.constant & (1u << n)) ? 0 : i * 4);
                         x += strf(" a%u=(%.3g %.3g %.3g %.3g)", n, a[0], a[1], a[2], a[3]);
                     }

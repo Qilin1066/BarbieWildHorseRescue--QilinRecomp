@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It runs the game's opening scenes, not yet the whole game.** Every function the game needs lifts to C++ and compiles, and `qilin_run` runs the result over a native kernel, Direct3D (over Vulkan, with fixed-function lighting), DirectSound and the controller library. From power-on the game shows its logos and intro movie, its menus, the New Adventure movie, the stable yard, the dressing room and the stables in 3D, and its mini-game races (v0.9.0); that much has been driven with scripted controller input and runs without a stop. Nothing has been played through yet, and the lifted code has not been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
+**It runs the game's opening scenes, not yet the whole game.** Every function the game needs lifts to C++ and compiles, and `qilin_run` runs the result over a native kernel, Direct3D (over Vulkan, with fixed-function lighting), DirectSound and the controller library. From power-on the game shows its logos and intro movie, its menus, the New Adventure movie, the stable yard, the dressing room and the stables in 3D, and its four mini-games through to their results (v0.9.1); that much has been driven with scripted controller input and runs without a stop. Nothing has been played through yet, and the lifted code has not been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
@@ -24,7 +24,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it and runs into its engine (v0.6.0); three test programs go from XBE through the lifter to native programs and run in CI |
 | The controller library | ✅ natively, found by name in this XDK build, through the window |
 | DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; the movie's sound plays; 3D positioning recorded but not applied |
-| Direct3D | 🔨 natively over the renderer (v0.8.0), with fixed-function lighting (v0.9.0): the menus, the stable yard, the dressing room, the stables and a race; specular and two-sided lighting still to do |
+| Direct3D | 🔨 natively over the renderer (v0.8.0), with fixed-function lighting (v0.9.0): the menus, the stable yard, the dressing room, the stables and the mini-games; specular and two-sided lighting still to do |
 | The XMV movie player | ✅ lifted whole, through the video overlay (v0.8.0) |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 

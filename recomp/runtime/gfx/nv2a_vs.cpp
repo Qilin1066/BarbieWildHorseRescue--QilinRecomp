@@ -5,6 +5,7 @@
 //
 // The semantics follow the NV2A as documented by xemu's vertex shader
 // translator (nv2a/vsh.c), which was checked against hardware.
+#include <limits>
 #include <stdexcept>
 
 #include "nv2a_shaders.hpp"
@@ -87,6 +88,8 @@ struct Vs {
                                                      b.op(op::FOrdLessThan, boolean, {m, b.c_float(1e30f)})});
         return b.op(op::Select, f, {ok, refined, r});
     }
+    // ±∞ as ±the largest float (see Ilu::Rcp).
+    Id finite(Id v) { return b.ext(glsl::FClamp, f, {v, b.c_float(-std::numeric_limits<float>::max()), b.c_float(std::numeric_limits<float>::max())}); }
     Id cmp(uint16_t compare, Id a, Id c) {  // 1.0 per component where it holds, else 0.0
         const Id bv = b.t_bvec(4);
         return b.op(op::Select, v4, {b.op(compare, bv, {a, c}), b.splat(b.c_float(1)), zero4});
@@ -114,7 +117,12 @@ struct Vs {
         const Id s = x(c);
         switch (in.ilu) {
             case vsh::Ilu::Mov: return c;
-            case vsh::Ilu::Rcp: return b.splat(reciprocal(s));
+            // RCP and RSQ of 0 are infinite, and the vertex unit's 0 × ∞ is 0
+            // (NV_vertex_program: 0.0 times anything is 0.0), where IEEE's is
+            // NaN: a zero normal normalised (dp3, rsq, mul) is (0, 0, 0) there.
+            // Their results are kept finite, the largest float in place of
+            // infinity, so that a product with 0 is 0 and others stay as large.
+            case vsh::Ilu::Rcp: return b.splat(finite(reciprocal(s)));
             case vsh::Ilu::Rcc: {
                 // The reciprocal, its magnitude clamped to [5.42101e-20, 1.884467e+19].
                 const Id r = reciprocal(s);
@@ -122,7 +130,7 @@ struct Vs {
                 const Id neg = b.ext(glsl::FClamp, f, {r, b.c_float(-1.884467e+19f), b.c_float(-5.42101e-20f)});
                 return b.splat(b.op(op::Select, f, {b.op(op::FOrdGreaterThan, boolean, {r, b.c_float(0)}), pos, neg}));
             }
-            case vsh::Ilu::Rsq: return b.splat(b.ext(glsl::InverseSqrt, f, {b.ext(glsl::FAbs, f, {s})}));
+            case vsh::Ilu::Rsq: return b.splat(finite(b.ext(glsl::InverseSqrt, f, {b.ext(glsl::FAbs, f, {s})})));
             case vsh::Ilu::Exp: {
                 const Id fl = b.ext(glsl::Floor, f, {s});
                 return b.vec4(b.ext(glsl::Exp2, f, {fl}), b.op(op::FSub, f, {s, fl}), b.ext(glsl::Exp2, f, {s}), b.c_float(1));

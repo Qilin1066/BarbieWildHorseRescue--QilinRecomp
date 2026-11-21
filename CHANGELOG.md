@@ -4,6 +4,18 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-21
+
+All four mini-games play through to their results screens; lit scenes are no longer twice as bright.
+
+### Fixed
+- **Fixed-function lighting doubled every lit colour**: the generated program put the second operand of its ADDs in the B slot, where the translator reads ADD's from C (`a + c`). Each light's ambient colour was replaced by whatever was in `r0`, and the last step, colour + emissive, became `r0 + r0`. The outdoor ground (lit with the vertex colour and a near-white ambient, then doubled by its texture stage) came out white in Seagull Beach and lime in Silver Valley.
+- **Zero times infinity in vertex programs**: RCP and RSQ of 0 are infinite, and the NV2A's 0 × ∞ is 0 where a PC GPU's is NaN, so a zero normal normalised was NaN instead of (0, 0, 0). RCP and RSQ now give the largest float in place of infinity, with a renderer test.
+- `QILIN_TRACE_DETAIL` printed stale vertices for draws whose vertices come from the vertex cache; it now leaves those out (run with `QILIN_NO_VERTEX_CACHE=1` to see them).
+
+### Added
+- `QILIN_TRACE_DETAIL` also prints each draw's lighting (states, material, enabled lights, the normal matrix's scale) and fog states; `QILIN_DUMP_TEXTURES=DIR` writes every texture as it's uploaded, decoded on the CPU.
+
 ## [0.9.0] - 2026-11-21
 
 Into the game: from power-on through the menus, the New Adventure movie, the stable yard, the dressing room and the stables, and through the Mini-Games lobby into a race, drawn in 3D with lighting, with no stop in any of it.
