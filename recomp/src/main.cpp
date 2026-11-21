@@ -44,6 +44,7 @@
 #include "cfg.hpp"
 #include "decoder.hpp"
 #include "game.hpp"
+#include "game_file.hpp"
 #include "lifter.hpp"
 #include "sha256.hpp"
 #include "xbe.hpp"
@@ -378,42 +379,6 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
     return 0;
 }
 
-// The game as the owner has it: a disc image, an extracted disc's folder, or default.xbe.
-bool is_image_file(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    char magic[4] = {};
-    return f && f.read(magic, 4) && std::string_view(magic, 4) != "XBEH";
-}
-
-std::vector<uint8_t> read_whole(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) throw Failure{"cannot open " + p.string()};
-    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
-}
-
-std::vector<uint8_t> load_executable(const std::string& path) {
-    const std::filesystem::path p(path);
-    std::error_code ec;
-    if (std::filesystem::is_directory(p, ec)) {
-        // An extracted disc: the file name's case is whatever the extractor wrote.
-        for (const auto& e : std::filesystem::directory_iterator(p, ec)) {
-            std::string name = e.path().filename().string();
-            std::ranges::transform(name, name.begin(), [](char ch) { return ch >= 'A' && ch <= 'Z' ? char(ch - 'A' + 'a') : ch; });
-            if (name == "default.xbe") return read_whole(e.path());
-        }
-        throw Failure{path + " holds no default.xbe"};
-    }
-    if (!std::filesystem::exists(p, ec)) throw Failure{"cannot open " + path};
-    if (!is_image_file(p)) return read_whole(p);
-    auto iso = Xiso::open(path);
-    if (!iso) throw Failure{path + ": " + iso.error()};
-    const XisoFile* f = iso->find("default.xbe");
-    if (!f) throw Failure{path + ": the disc has no default.xbe"};
-    auto data = iso->read(*f);
-    if (!data) throw Failure{path + ": " + data.error()};
-    return std::move(*data);
-}
-
 int cmd_disc(const std::string& path) {
     auto iso = Xiso::open(path);
     if (!iso) throw Failure{path + ": " + iso.error()};
@@ -471,7 +436,9 @@ int cmd_extract(const std::string& path, std::span<const std::string_view> args)
 int run(std::string_view cmd, const std::string& path, std::span<const std::string_view> args) {
     if (cmd == "disc") return cmd_disc(path);
     if (cmd == "extract") return cmd_extract(path, args);
-    const std::vector<uint8_t> file = load_executable(path);
+    auto bytes = load_game_executable(path);
+    if (!bytes) throw Failure{bytes.error()};
+    const std::vector<uint8_t>& file = *bytes;
     auto loaded = Xbe::parse(file);
     if (!loaded) {
         std::println(stderr, "qilin: error: {}: {}", path, loaded.error());

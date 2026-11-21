@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.2.1 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.3.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -97,7 +97,7 @@ function(qilin_tool target)
 endfunction()
 
 # ---- The XBE loader, the disc image reader and SHA-256: runtime code too (no std::format) ----
-add_library(qilin_xbe STATIC recomp/src/xbe.cpp recomp/src/xiso.cpp recomp/src/sha256.cpp)
+add_library(qilin_xbe STATIC recomp/src/xbe.cpp recomp/src/xiso.cpp recomp/src/sha256.cpp recomp/src/game_file.cpp)
 target_include_directories(qilin_xbe PUBLIC recomp/src recomp/runtime)
 target_link_libraries(qilin_xbe PRIVATE qilin_warnings)
 
@@ -227,6 +227,69 @@ add_executable(qilin_settings_tests recomp/runtime/platform/settings_tests.cpp)
 target_link_libraries(qilin_settings_tests PRIVATE qilin_platform qilin_warnings)
 add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 
-# The runtime's host side (the kernel, Direct3D, DirectSound and the game's
-# own replacements) and qilin_run come with roadmap step 3, from
-# GBTGhoulies--QilinRecomp, once the game has been analysed.
+# ---- Runtime host side: the kernel, natively (roadmap step 3) ----
+# The replacement registry, guest RAM, the scheduler, the kernel and its I/O
+# manager: the console's, the same for every game. Direct3D, DirectSound, the
+# controller library, the game's own replacements and qilin_run follow the
+# analysis (they are registered at addresses in the game's XBE).
+add_library(qilin_host STATIC recomp/runtime/host/host.cpp recomp/runtime/host/kernel.cpp recomp/runtime/host/kernel_crypto.cpp
+                              recomp/runtime/host/sched.cpp recomp/runtime/host/kernel_io.cpp recomp/runtime/host/call_guest.cpp
+                              recomp/runtime/host/guest_ram.cpp)
+target_include_directories(qilin_host PUBLIC recomp/runtime/host PRIVATE recomp/src)
+target_link_libraries(qilin_host PUBLIC qilin_runtime PRIVATE qilin_warnings)
+add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp)
+target_link_libraries(qilin_host_tests PRIVATE qilin_host qilin_warnings)
+add_test(NAME qilin_host_tests COMMAND qilin_host_tests)
+
+# qilin_run: the game, from `qilin lift` output (needs your own default.xbe):
+#   qilin lift <game> --out gen && cmake -B build -DQILIN_GEN_DIR=$PWD/gen
+function(qilin_runner target)   # ARGN: the generated sources
+    add_executable(${target} recomp/runtime/host/run.cpp recomp/runtime/dispatch.cpp ${ARGN})
+    target_include_directories(${target} PRIVATE recomp/src)
+    target_compile_definitions(${target} PRIVATE QILIN_CHECKED_MEMORY)  # bring-up: bad guest accesses stop with an address
+    target_link_libraries(${target} PRIVATE qilin_host qilin_platform qilin_xbe)
+    if(MSVC)
+        # The generated files are large: room for their sections (/bigobj),
+        # the conformance switches the rest of the project builds with, and
+        # under Visual Studio's own generator the files compiled in parallel.
+        target_compile_options(${target} PRIVATE /bigobj /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+        if(CMAKE_GENERATOR MATCHES "Visual Studio")
+            target_compile_options(${target} PRIVATE /MP)
+        endif()
+    endif()
+endfunction()
+set(QILIN_GEN_DIR "" CACHE PATH "qilin lift output directory to build qilin_run from")
+if(QILIN_GEN_DIR)
+    file(GLOB QILIN_GEN_SOURCES CONFIGURE_DEPENDS "${QILIN_GEN_DIR}/*.cpp")
+    qilin_runner(qilin_run ${QILIN_GEN_SOURCES})
+    target_include_directories(qilin_run PRIVATE "${QILIN_GEN_DIR}")
+endif()
+
+# ---- End to end, without the game: small hand-assembled Xbox programs ----
+# Each is written as an XBE (recomp/tests/make_test_xbe.cpp), lifted by
+# `qilin lift`, built with the runtime exactly as the game is, and run: the
+# whole path from an executable to a native program, on every CI compiler.
+add_executable(qilin_make_test_xbe recomp/tests/make_test_xbe.cpp)
+target_link_libraries(qilin_make_test_xbe PRIVATE qilin_warnings)
+function(qilin_add_program name expect)
+    set(dir ${CMAKE_BINARY_DIR}/programs/${name})
+    set(gen ${dir}/gen)
+    set(sources ${gen}/lifted_000.cpp ${gen}/stubs.cpp ${gen}/table.cpp)
+    add_custom_command(OUTPUT ${dir}/disc/default.xbe ${sources} ${gen}/functions.hpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${dir}/disc
+        COMMAND qilin_make_test_xbe ${name} ${dir}/disc/default.xbe
+        COMMAND qilin lift ${dir}/disc/default.xbe --out ${gen} --any-build
+        DEPENDS qilin_make_test_xbe qilin
+        COMMENT "Lifting the test program ${name}" VERBATIM)
+    qilin_runner(qilin_program_${name} ${sources})
+    target_include_directories(qilin_program_${name} PRIVATE ${gen})
+    file(WRITE ${dir}/disc/HELLO.TXT "Hello from the disc.")
+    add_test(NAME qilin_program_${name} COMMAND qilin_program_${name} --any-build --data-dir ${dir}/data ${dir}/disc)
+    set_tests_properties(qilin_program_${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expect}" TIMEOUT 60)
+endfunction()
+qilin_add_program(hello "the entry point returned 42")
+# "Hello from the disc.": 20 bytes, which add up to 1818.
+qilin_add_program(files "the entry point returned 1818")
+# A kernel function the runtime doesn't provide stops it, named, with its caller.
+qilin_add_program(missing "no replacement for kernel DbgPrint \\(ordinal 8\\), called from 0001100B")

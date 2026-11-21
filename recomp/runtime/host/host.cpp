@@ -1,0 +1,366 @@
+#include "host.hpp"
+#include "strf.hpp"
+
+#include <chrono>
+#include <initializer_list>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <vector>
+#include <span>
+
+namespace qilin::host {
+namespace {
+
+constexpr KernelExport kExports[] = {
+#include "kernel_exports.inc"
+};
+
+struct Hle {
+    const char* name;
+    HleFn fn;
+};
+std::map<uint32_t, Hle>& registry() {
+    static std::map<uint32_t, Hle> r;
+    return r;
+}
+std::vector<Region>& regions() {
+    static std::vector<Region> r;
+    return r;
+}
+thread_local rt::Context* g_current = nullptr;
+
+}  // namespace
+
+const KernelExport* kernel_export(uint32_t ordinal) {
+    const auto it = std::ranges::lower_bound(kExports, ordinal, {}, &KernelExport::ordinal);
+    return it != std::end(kExports) && it->ordinal == ordinal ? &*it : nullptr;
+}
+
+void register_hle(uint32_t guest_addr, const char* name, HleFn fn) { registry()[guest_addr] = {name, fn}; }
+
+namespace {
+struct MmioReg {
+    const char* name;
+    MmioRead read;
+};
+std::map<uint32_t, MmioReg>& mmio() {
+    static std::map<uint32_t, MmioReg> r;
+    return r;
+}
+}  // namespace
+void register_mmio_read(uint32_t addr, const char* name, MmioRead fn) { mmio()[addr] = {name, fn}; }
+size_t hle_count() { return registry().size(); }
+
+uint32_t arg(const rt::Context& c, int i) {
+    const rt::Mem m{c.mem, c.mem_size};
+    return rt::ld32(m, c.esp + 4u + 4u * uint32_t(i), 0);
+}
+
+void ret(rt::Context& c, uint32_t eax, uint32_t arg_bytes) {
+    const rt::Mem m{c.mem, c.mem_size};
+    c.ret_to = rt::ld32(m, c.esp, 0);
+    c.esp += 4u + arg_bytes;
+    c.eax = eax;
+}
+
+// Physical addresses are 28 bits on the Xbox (D3D masks resource addresses to
+// them), so contiguous memory stays below 256 MB whatever the RAM size.
+uint32_t contiguous(uint32_t bytes, uint32_t lowest, uint32_t highest, uint32_t align, uint32_t protect) {
+    VirtualMemory& v = vm();
+    const uint32_t a = std::max<uint32_t>(align, VirtualMemory::kPage);
+    uint32_t at = physical_room((uint64_t(bytes) + VirtualMemory::kPage - 1) & ~uint64_t(VirtualMemory::kPage - 1))
+                      ? v.reserve(0, bytes, protect, true, a & (a - 1) ? VirtualMemory::kPage : a, lowest & 0x0FFFFFFFu,
+                                  std::min<uint32_t>(highest, kPhysicalLimit - 1))
+                      : 0;
+    if (at) v.commit(at, v.region_size(at), protect);
+    else out_of_memory("contiguous memory", bytes);
+    return at;
+}
+
+// The title gets 0 or STATUS_NO_MEMORY, as from the Xbox's own kernel, and
+// many titles don't check (they don't run out on the hardware): said on the
+// console, with what's in use, since what follows may be a fault elsewhere.
+void out_of_memory(const char* what, uint32_t bytes) {
+    const VirtualMemory& v = vm();
+    std::printf("qilin_run: %s: no room for %u bytes (%llu KB of contiguous memory, %llu KB of virtual memory committed, of %u KB)\n", what, bytes,
+                static_cast<unsigned long long>(v.reserved_bytes() / 1024),
+                static_cast<unsigned long long>(virtual_memory().committed_bytes() / 1024), (v.hi() - v.lo()) / 1024);
+    std::fflush(stdout);
+}
+
+bool physical_room(uint64_t bytes) {
+    const VirtualMemory& v = vm();
+    return v.reserved_bytes() + virtual_memory().committed_bytes() + bytes <= uint64_t(v.hi() - v.lo());
+}
+
+void VirtualMemory::init(uint8_t* ram, uint32_t lo, uint32_t hi, bool host_backed) {
+    ram_ = ram;
+    lo_ = lo;
+    hi_ = hi;
+    host_backed_ = host_backed;
+    regions_.clear();
+}
+
+uint32_t VirtualMemory::reserve(uint32_t base, uint32_t size, uint32_t protect, bool top_down, uint32_t align, uint32_t lowest,
+                               uint32_t highest) {
+    const uint64_t bytes = (uint64_t(size) + kPage - 1) & ~uint64_t(kPage - 1);
+    if (bytes == 0 || bytes > hi_ - lo_ || align == 0 || (align & (align - 1))) return 0;
+    const uint64_t lim_lo = std::max<uint64_t>(lo_, lowest), lim_hi = std::min<uint64_t>(hi_, uint64_t(highest) + 1);
+    auto free_at = [&](uint64_t at) {  // [at, at + bytes) inside the range and clear of every reservation
+        if (at < lim_lo || at + bytes > lim_hi) return false;
+        auto it = regions_.upper_bound(uint32_t(at));
+        if (it != regions_.end() && it->first < at + bytes) return false;
+        if (it != regions_.begin()) {
+            --it;
+            if (uint64_t(it->first) + it->second.size > at) return false;
+        }
+        return true;
+    };
+    uint64_t at = 0;
+    if (base) {
+        at = base & ~(kGranularity - 1);
+        if (!free_at(at)) return 0;
+    } else {
+        // Candidate starts: the range's ends and the edges of each reservation.
+        std::vector<uint64_t> cands;
+        auto up = [&](uint64_t v) { return (v + align - 1) & ~uint64_t(align - 1); };
+        auto down = [&](uint64_t v) { return v & ~uint64_t(align - 1); };
+        if (!top_down) {
+            cands.push_back(up(lim_lo));
+            for (const auto& [b, r] : regions_) cands.push_back(up(uint64_t(b) + ((uint64_t(r.size) + kGranularity - 1) & ~uint64_t(kGranularity - 1))));
+        } else {
+            if (lim_hi >= bytes) cands.push_back(down(lim_hi - bytes));
+            for (auto it = regions_.rbegin(); it != regions_.rend(); ++it)
+                if (it->first >= bytes) cands.push_back(down(it->first - bytes));
+        }
+        bool found = false;
+        for (uint64_t c : cands)
+            if (free_at(c)) {
+                at = c;
+                found = true;
+                break;
+            }
+        if (!found) return 0;
+    }
+    regions_[uint32_t(at)] = Region{uint32_t(bytes), protect, std::vector<uint32_t>(size_t(bytes / kPage), 0)};
+    return uint32_t(at);
+}
+
+const std::pair<const uint32_t, VirtualMemory::Region>* VirtualMemory::find(uint32_t addr) const {
+    auto it = regions_.upper_bound(addr);
+    if (it == regions_.begin()) return nullptr;
+    --it;
+    return addr - it->first < it->second.size ? &*it : nullptr;
+}
+
+bool VirtualMemory::commit(uint32_t base, uint32_t size, uint32_t protect) {
+    const uint32_t first = base & ~(kPage - 1);
+    const uint64_t end = (uint64_t(base) + size + kPage - 1) & ~uint64_t(kPage - 1);
+    const auto* r = find(first);
+    if (!r || end > uint64_t(r->first) + r->second.size || end == first) return false;
+    auto& pages = const_cast<Region&>(r->second).page_protect;
+    if (host_backed_) commit_guest_pages(first, uint32_t(end - first));
+    for (uint64_t a = first; a < end; a += kPage) {
+        uint32_t& p = pages[size_t((a - r->first) / kPage)];
+        if (!p) std::memset(ram_ + a, 0, kPage);
+        p = protect ? protect : 4;
+    }
+    return true;
+}
+
+bool VirtualMemory::decommit(uint32_t base, uint32_t size) {
+    const uint32_t first = base & ~(kPage - 1);
+    const auto* r = find(first);
+    if (!r) return false;
+    const uint64_t end = size ? (uint64_t(base) + size + kPage - 1) & ~uint64_t(kPage - 1) : uint64_t(r->first) + r->second.size;
+    if (end > uint64_t(r->first) + r->second.size) return false;
+    auto& pages = const_cast<Region&>(r->second).page_protect;
+    for (uint64_t a = first; a < end; a += kPage) pages[size_t((a - r->first) / kPage)] = 0;
+    if (host_backed_) free_guest_pages(first, uint32_t(end - first));
+    return true;
+}
+
+bool VirtualMemory::release(uint32_t base) {
+    const auto it = regions_.find(base);
+    if (it == regions_.end()) return false;
+    if (host_backed_) free_guest_pages(base, it->second.size);
+    regions_.erase(it);
+    return true;
+}
+
+uint64_t VirtualMemory::uncommitted_bytes(uint32_t base, uint32_t size) const {
+    const uint32_t first = base & ~(kPage - 1);
+    const uint64_t end = (uint64_t(base) + size + kPage - 1) & ~uint64_t(kPage - 1);
+    const auto* r = find(first);
+    if (!r || end > uint64_t(r->first) + r->second.size) return 0;
+    uint64_t n = 0;
+    for (uint64_t a = first; a < end; a += kPage) n += r->second.page_protect[size_t((a - r->first) / kPage)] ? 0 : kPage;
+    return n;
+}
+
+uint32_t VirtualMemory::region_size(uint32_t base) const {
+    const auto it = regions_.find(base);
+    return it == regions_.end() ? 0 : it->second.size;
+}
+
+std::optional<VirtualMemory::Info> VirtualMemory::query(uint32_t addr) const {
+    if (addr < lo_ || addr >= hi_) return std::nullopt;
+    const uint32_t page = addr & ~(kPage - 1);
+    if (const auto* r = find(page)) {
+        const auto& pages = r->second.page_protect;
+        size_t k = (page - r->first) / kPage;
+        const uint32_t p = pages[k];
+        size_t e = k;
+        while (e < pages.size() && (pages[e] != 0) == (p != 0) && (!p || pages[e] == p)) ++e;
+        return Info{page, r->first, r->second.protect, uint32_t((e - k) * kPage), p ? kMemCommit : kMemReserve, p, kMemPrivate};
+    }
+    // Free: up to the next reservation or the end of the range.
+    const auto next = regions_.upper_bound(page);
+    const uint32_t end = next == regions_.end() ? hi_ : next->first;
+    return Info{page, 0, 0, end - page, kMemFree, 1, 0};  // PAGE_NOACCESS
+}
+
+uint64_t VirtualMemory::committed_bytes() const {
+    uint64_t n = 0;
+    for (const auto& [b, r] : regions_)
+        for (uint32_t p : r.page_protect) n += p ? kPage : 0;
+    return n;
+}
+uint64_t VirtualMemory::reserved_bytes() const {
+    uint64_t n = 0;
+    for (const auto& [b, r] : regions_) n += r.size;
+    return n;
+}
+VirtualMemory& vm() {
+    static VirtualMemory v;
+    return v;
+}
+VirtualMemory& virtual_memory() {
+    static VirtualMemory v;
+    return v;
+}
+
+namespace {
+MemoryMap g_map{kRetailRamMb << 20};
+}
+const MemoryMap& memory_map() { return g_map; }
+void set_memory_map(MemoryMap m) { g_map = m; }
+
+void set_regions(std::vector<Region> r) { regions() = std::move(r); }
+void set_current(rt::Context* c) { g_current = c; }
+rt::Context* current_context() { return g_current; }
+
+namespace {
+// XDK library symbols found by signature (tools/gen/xdk_symbols.py, run on
+// the supported build), then the ones identified by reading them, which the
+// signature database lacks. Empty until the game has been analysed; the
+// first entry only keeps the table from being empty.
+constexpr XdkSymbol kXdkSymbols[] = {
+    {0, "", ""},
+#include "xdk_symbols.inc"
+};
+}  // namespace
+
+const XdkSymbol* xdk_symbol(uint32_t a) {
+    for (const XdkSymbol& s : kXdkSymbols)
+        if (s.address == a && a != 0) return &s;
+    return nullptr;
+}
+const XdkSymbol* xdk_symbol(std::string_view name) {
+    for (const XdkSymbol& s : kXdkSymbols)
+        if (s.address != 0 && name == s.name) return &s;
+    return nullptr;
+}
+
+std::string describe(uint32_t a) {
+    if (a >= 0x80000000u && a < 0x80001000u) {
+        const KernelExport* e = kernel_export(a & 0xFFFu);
+        return e ? strf("kernel %s (ordinal %u)", e->name, unsigned(e->ordinal)) : strf("kernel ordinal %u", a & 0xFFFu);
+    }
+    if (const XdkSymbol* s = xdk_symbol(a)) return strf("%s %s (%08X)", s->library, s->name, a);
+    for (const Region& r : regions())
+        if (a >= r.lo && a < r.hi) return strf("%s code at %08X", r.name.c_str(), a);
+    return strf("%08X", a);
+}
+
+}  // namespace qilin::host
+
+namespace qilin::rt {
+
+void call_unlifted(Context& c, uint32_t target) {
+    const auto& r = host::registry();
+    if (const auto it = r.find(target); it != r.end()) {
+        // QILIN_TRACE_HLE=1 logs every replacement call: caller, arguments, result.
+        static const bool trace = [] {
+            const char* v = std::getenv("QILIN_TRACE_HLE");
+            return v && *v && *v != '0';
+        }();
+        if (trace) {
+            const Mem m{c.mem, c.mem_size};
+            std::fprintf(stderr, "hle %08X %s(%08X %08X %08X %08X %08X %08X)", ld32(m, c.esp, 0), it->second.name,
+                         host::arg(c, 0), host::arg(c, 1), host::arg(c, 2), host::arg(c, 3), host::arg(c, 4), host::arg(c, 5));
+            it->second.fn(c);
+            std::fprintf(stderr, " = %08X\n", c.eax);
+            return;
+        }
+        it->second.fn(c);
+        return;
+    }
+    const Mem m{c.mem, c.mem_size};
+    const uint32_t caller = c.esp + 4 <= c.mem_size ? ld32(m, c.esp, 0) : 0;
+    static std::string why;
+    why = strf("no replacement for %s, called from %08X", host::describe(target).c_str(), caller);
+    trap(target, why.c_str());
+}
+
+uint32_t mmio_read32(uint32_t addr, uint32_t at) {
+    const auto it = host::mmio().find(addr);
+    if (it == host::mmio().end() || !it->second.read) {
+        static std::string why;
+        why = strf("read of device register %08X, which isn't modelled", addr);
+        trap(at, why.c_str());
+    }
+    return it->second.read();
+}
+
+void mmio_write32(uint32_t addr, uint32_t value, uint32_t at) {
+    (void)value;
+    static std::string why;
+    why = strf("write to device register %08X, which isn't modelled", addr);
+    trap(at, why.c_str());
+}
+
+[[noreturn]] void trap(uint32_t guest_addr, const char* why) {
+    std::fflush(stdout);
+    std::fprintf(stderr, "qilin: stopped at %08X: %s\n", guest_addr, why);
+    if (const Context* c = host::g_current)
+        std::fprintf(stderr, "  eax %08X ecx %08X edx %08X ebx %08X esp %08X ebp %08X esi %08X edi %08X\n", c->eax,
+                     c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
+    std::fflush(stderr);
+    std::_Exit(3);  // other guest threads may be blocked: no static destructors
+}
+
+}  // namespace qilin::rt
+
+namespace qilin::host {
+namespace {
+std::vector<void (*)(rt::Context&)>& idle_hooks() {
+    static std::vector<void (*)(rt::Context&)> v;
+    return v;
+}
+}  // namespace
+
+void add_idle_hook(void (*hook)(rt::Context&)) { idle_hooks().push_back(hook); }
+
+void idle(rt::Context& c) {
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(16)) return;
+    last = now;
+    for (auto hook : idle_hooks()) hook(c);
+}
+
+}  // namespace qilin::host

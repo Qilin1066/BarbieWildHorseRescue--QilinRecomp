@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level half of the runtime (renderer, sound, window, input, the settings menu), brought over from GBTGhoulies--QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
+**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level part of the runtime (the kernel, the scheduler, the file system, the renderer, sound, window, input, the settings menu), brought over from GBTGhoulies--QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
 
 | Piece | State |
 |---|---|
@@ -21,7 +21,8 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | Differential test of every lifted function against the original x86 | to do, with the game |
 | Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
-| Runtime host side: the kernel and the XDK libraries replaced natively, `qilin_run` | to do: it depends on the analysis |
+| Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ carried over (v0.3.0), `qilin_run` new; three test programs go from XBE through the lifter to native programs and run in CI |
+| Direct3D, DirectSound and the controller library over those layers | to do: they depend on the game's XDK build |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 
 ## Versions and changes
@@ -78,6 +79,7 @@ build/qilin suspects <game>                     # kept functions with problems, 
 build/qilin coverage <game> [--list]            # every byte: code, table, padding or unknown (exit 3 if lifted code has unknown bytes)
 build/qilin insns    <game> [--linear] -o listing.txt
 build/qilin lift     <game> --out gen/          # lift to C++ (gen/ is gitignored: never commit it)
+build/qilin_run      <extracted disc> [--data-dir DIR] [--ram-mb N]   # run it (built with -DQILIN_GEN_DIR=gen)
 ```
 
 `build/qilin_menu_preview` opens the game's window with a test card and the settings menu (F1 or Esc), with no game needed: the menu, the picture settings and the keys can be tried, and they are kept in the real settings file.
@@ -94,7 +96,8 @@ Code that compiles lifted C++ must link the `qilin_runtime` CMake target (or pas
 | `recomp/runtime/audio/` | The audio engine: voices (PCM, Xbox ADPCM) and the 48 kHz mixer |
 | `recomp/runtime/platform/` | The window, the controllers and sound output, through SDL3; the settings file |
 | `recomp/runtime/ui/` | The settings menu, and `qilin_menu_preview` |
-| `recomp/tests/` | Unit tests on a synthetic in-memory XBE and disc image, so they need no game files |
+| `recomp/runtime/host/` | The runtime's host side: `qilin_run`, the replacement registry, guest RAM, the kernel, the scheduler, the file system |
+| `recomp/tests/` | Unit tests on a synthetic in-memory XBE and disc image, and the hand-assembled test programs the end-to-end tests lift, build and run; none needs game files |
 | `tools/check/` | The LLVM decoder cross-check and the x87 rounding and transcendental cross-checks |
 | `tools/analyse-game.ps1` | What `Analyse game.bat` runs |
 | `third_party/` | Vendored dependencies: Zydis and Zycore, Dear ImGui, FSR 1, SMAA and volk (MIT), the Vulkan headers (Apache-2.0 or MIT), nxdk's kernel export list (CC0). See `third_party/README.md` |

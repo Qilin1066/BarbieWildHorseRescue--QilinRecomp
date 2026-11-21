@@ -14,21 +14,13 @@
 #include <string_view>
 #include <vector>
 
+#include "build.hpp"
 #include "cfg.hpp"
 #include "lifter.hpp"
 #include "regions.hpp"
 #include "xbe.hpp"
 
 namespace qilin::game {
-
-inline constexpr std::string_view kTitle = "Barbie Horse Adventures: Wild Horse Rescue";
-
-// SHA-256 of the supported default.xbe (USA), lower-case hex. Empty: not
-// recorded yet. `qilin info` prints a file's; once recorded, every command
-// refuses another build unless given --any-build.
-// (Not constexpr: code that asks whether it is recorded must not be a
-// constant condition to the compiler.)
-inline const std::string kSha256 = "";
 
 struct Range {
     uint32_t lo, hi;
@@ -38,8 +30,6 @@ struct Replaced {
     std::string_view why;
 };
 
-// .text by region (game code, XAPI, the C runtime, middleware...).
-inline const std::vector<TextRegion> kTextRegions = {};
 // Regions lifted whole. Empty: the whole of .text.
 inline const std::vector<Range> kLiftedRegions = {};
 // Regions where every function entry is aligned to kAlignment bytes (to be

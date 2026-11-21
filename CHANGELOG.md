@@ -2,6 +2,20 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.3.0] - 2026-11-21
+
+The kernel, and programs that run: an Xbox executable goes through the lifter to a native program over the native kernel. Still nothing from the game: every check is on test programs.
+
+### Added
+- The runtime's kernel-level host side, from GBTGhoulies--QilinRecomp v0.41.3 (`docs/runtime.md`): the replacement registry, guest RAM, the kernel (80 exports: memory, critical sections, timers, DPCs, settings, sections, strings, SHA-1), the scheduler (guest threads on host threads), and the I/O manager over an extracted disc and a data folder, with its tests.
+- `qilin_run` (`recomp/runtime/host/run.cpp`): loads the executable, sets up what the console's kernel does before a title runs, and calls the XBE's **entry point**, lifted. No address of the game is needed to start it (the sister project's calls its game's start-up functions by address). It refuses an executable that is not the supported build, once that is recorded.
+- End-to-end tests in CI (`recomp/tests/make_test_xbe.cpp`, `qilin_add_program`): three hand-assembled Xbox programs written as XBE files, lifted, built and run as the game will be: one calls the kernel and computes, one reads a file from the disc, one calls a kernel function the runtime lacks and must be stopped by name.
+- `tools/gen/xdk_symbols.py` (XbSymbolDatabase names for the game's XDK libraries); `recomp/runtime/host/xdk_symbols.inc` is empty until it has been run on the game.
+
+### Changed
+- What the runtime may know of the supported build (its name, SHA-256 and code regions) is `recomp/src/build.hpp`; `game.hpp` keeps the tools' part. Finding `default.xbe` in an image, a folder or a file is `recomp/src/game_file.*`, shared by the tools and the runtime.
+- The window, sound output and audio engine brought up to the sister project's v0.41.3 (its sound log).
+
 ## [0.2.1] - 2026-11-21
 
 ### Changed
