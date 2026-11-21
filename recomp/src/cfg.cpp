@@ -184,6 +184,30 @@ uint32_t Cfg::bound_of(uint32_t f) const {
     return it == cand_.end() ? send : std::min(*it, send);
 }
 
+// bound_of(v), past any weakly-evidenced function whose entry v's own
+// instructions, decoded straight on from v, step over: such an entry lies
+// inside one of v's instructions and is misaligned if v is real, so it
+// mustn't cut v's exploration short (the check that would remove it,
+// displaces_weak_seed, needs that exploration). Seen in this game: a data
+// word equal to 0x800F0 seeded a function in the middle of the instruction
+// at 0x800EE, and the real one at 0x800C0, known by an immediate, was lost.
+uint32_t Cfg::bound_over_misaligned(uint32_t v) const {
+    uint32_t b = bound_of(v);
+    for (int k = 0; k < 4; ++k) {
+        const auto it = funcs_.find(b);
+        if (it == funcs_.end() || it->second.origin == Origin::Reachable || it->second.origin == Origin::Eh) return b;
+        uint32_t a = v;
+        while (a < b) {
+            const Insn* i = dec_.decode(a);
+            if (!i) return b;
+            a = i->end();
+        }
+        if (a == b) return b;  // the entry is on an instruction boundary of v's: a function after v, not inside it
+        b = bound_of(b);
+    }
+    return b;
+}
+
 // hist ends with the `jmp [4*reg + table]`; out.at and out.table are set.
 void Cfg::resolve_jt(const std::vector<const Insn*>& hist, const XbeSection& sec, JumpTable& out) {
     const ZydisRegister reg = hist.back()->op[0].index;
@@ -581,7 +605,11 @@ void Cfg::run_queue(std::vector<uint32_t> q, Origin origin, uint8_t round) {
             if (!entry_ok(v)) continue;
             evidence_.insert(v);
             if (known_.contains(v) && !funcs_.contains(v)) q.push_back(v);
-            else if (xbe_.code_section_at(v) && !funcs_.contains(v) && !owned_.contains(v)) imm_seeds_.insert(v);
+            // Always a seed, whatever it is now: if its function is dropped
+            // later (cut short by a misaligned one: imm_round's eviction),
+            // the immediate round still has it. The round skips what's a
+            // function or owned when it runs.
+            if (xbe_.code_section_at(v)) imm_seeds_.insert(v);
         }
     }
 }
@@ -822,7 +850,12 @@ bool Cfg::imm_round() {
             return false;
         }();
         if (!entry_ok(v)) continue;
-        if (after_pad || after_ret_n || after_jmp || (in_aligned_region(v) && (clean_seed(v) || displaces_weak_seed(v)))) ok.push_back(v);
+        if (after_pad || after_ret_n || after_jmp || (in_aligned_region(v) && (clean_seed(v) || displaces_weak_seed(v)))) {
+            // Accepted: clear any misaligned function in its way, once
+            // (a victim that comes back is left to the validation).
+            if (evicted_for_.insert(v).second) evict_misaligned(v);
+            ok.push_back(v);
+        }
     }
     if (ok.empty()) break;
     run_queue({ok.rbegin(), ok.rend()}, Origin::ImmPtr);
@@ -842,7 +875,7 @@ bool Cfg::imm_round() {
 // misaligned one. Accepting v lets prune_misaligned() remove it.
 bool Cfg::displaces_weak_seed(uint32_t v) {
     if (funcs_.contains(v) || owned_.contains(v)) return false;
-    Explored r = explore(v, bound_of(v));
+    Explored r = explore(v, bound_over_misaligned(v));
     if (!r.bad.empty() || !r.overlap.empty() || r.insns.size() < 3) return false;
     bool displaces = false;
     for (auto& [a, i] : r.insns) {
@@ -851,6 +884,41 @@ bool Cfg::displaces_weak_seed(uint32_t v) {
             if (it->second.origin != Origin::Reachable && it->second.origin != Origin::Eh) displaces = true;
     }
     return displaces;
+}
+
+// An immediate pointer v whose own instructions step over the entries of
+// weakly-evidenced functions (bound_over_misaligned) and which, explored
+// past them, is clean and reaches none of their instructions as its own
+// but through them: those functions start inside v's instructions and are
+// the misaligned ones. They are removed so that v can be explored whole.
+// Returns whether any was.
+bool Cfg::evict_misaligned(uint32_t v) {
+    if (funcs_.contains(v) || owned_.contains(v)) return false;
+    const uint32_t b = bound_of(v), b2 = bound_over_misaligned(v);
+    if (b2 == b) return false;
+    Explored r = explore(v, b2);
+    if (!r.bad.empty() || !r.overlap.empty() || r.insns.size() < 3) return false;
+    for (auto& [a, i] : r.insns)
+        if (is_zero_bytes_insn(*i) || i->implausible_reason()) return false;
+    std::vector<uint32_t> victims;
+    for (auto it = funcs_.lower_bound(b); it != funcs_.end() && it->first < b2; ++it) {
+        const Origin o = it->second.origin;
+        if (o == Origin::Reachable || o == Origin::Eh) return false;
+        const uint32_t w = it->first;
+        // w strictly inside one of v's instructions.
+        const bool inside = std::ranges::any_of(r.insns, [&](auto& p) { return p.first < w && w < p.second->end(); });
+        if (!inside) return false;
+        victims.push_back(w);
+    }
+    if (victims.empty()) return false;
+    for (uint32_t w : victims) {
+        funcs_.erase(w);
+        cand_.erase(w);
+        known_.erase(w);
+    }
+    absorbed_ += victims.size();
+    rebuild_owned();
+    return true;
 }
 
 // v explores cleanly, and every already-owned instruction it reaches belongs
