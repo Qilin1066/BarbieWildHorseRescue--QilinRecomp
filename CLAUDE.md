@@ -26,7 +26,7 @@ Static recompilation of **Barbie Horse Adventures: Wild Horse Rescue** (original
 - `recomp/tests/tests.cpp`: unit tests on a synthetic XBE and disc image. `qilin_tests --write-xbe <file>` writes the synthetic XBE for the `qilin_tool_*` tests, which run the CLI on it.
 - `tools/check/`: `verify_decoder.py` (Zydis against LLVM, on `qilin insns` listings of the game), `x87/` (rounding and transcendental checks, no game needed).
 - `tools/analyse-game.ps1` and `Analyse game.bat`: build `qilin` on Windows and write the first analysis to `analysis-out/`. Keep the script Windows PowerShell 5.1-compatible and ASCII-only. **Never run yet.**
-- `docs/`: design and results. Keep them current. `roadmap-and-design-targets.md` is the roadmap, every design target and the settings menu's layout (parts that depend on the executable are marked **to confirm**); `xbe-analysis.md` is where the first analysis goes; `recompiler-core.md` what the tools are, what was changed from GBTGhoulies and which of its heuristics must be measured here; `prior-art.md`; `naming.md`.
+- `docs/`: design and results. Keep them current. `runtime.md` is the runtime and `qilin_run`'s design; `roadmap-and-design-targets.md` is the roadmap, every design target and the settings menu's layout (parts that depend on the executable are marked **to confirm**); `xbe-analysis.md` is where the first analysis goes; `recompiler-core.md` what the tools are, what was changed from GBTGhoulies and which of its heuristics must be measured here; `prior-art.md`; `naming.md`.
 
 ## Build and check
 
@@ -61,7 +61,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 
 ## Status (v0.3.0)
 
-- The tools build and their tests pass under GCC 14 and Clang (zig) locally; CI was green on all six configurations at v0.1.0 (commit `3aecd83`). They have run only on synthetic files.
+- The tools build and their tests pass under GCC 14 and Clang (zig) locally; CI is green on all six configurations at v0.3.0 (commit `cf1a03d`), the end-to-end programs included on MSVC, macOS and ARM64. They have run only on synthetic files.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
 - v0.2.0: the renderer, audio engine, platform layer and settings menu are in, with their tests; `qilin_menu_preview` shows the menu over a test card (seen working under Xvfb on Mesa's software driver). Nothing drives them from a game yet.
 - Unchecked: **everything on the real game**; the disc reader on a real image; the PowerShell script (never run).
