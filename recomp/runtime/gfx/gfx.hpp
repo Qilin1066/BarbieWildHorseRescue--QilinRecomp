@@ -1,0 +1,318 @@
+// The renderer: Vulkan 1.3, and only Vulkan (docs/graphics.md).
+//
+// The D3D replacements (recomp/runtime/host/d3d) draw through this interface
+// and nothing else in the runtime touches Vulkan. Frames are rendered into
+// the renderer's own images, the D3D back buffers, so a frame can be read
+// back, saved or scaled whether or not there's a window; presenting to a
+// window copies the finished frame to it.
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace qilin::gfx {
+
+namespace vsh { struct Program; }
+namespace nv2a { struct CombinerSetup; }
+
+struct Config {
+    uint32_t width = 640, height = 480;  // the frame buffers' size in pixels
+    uint32_t back_buffers = 1;           // D3DPRESENT_PARAMETERS.BackBufferCount; with the front buffer, one more image
+    // The render resolution: every frame buffer and render target drawn at
+    // these multiples of its size across and down (1-8), the game seeing
+    // its own sizes (set_resolution_scale changes them).
+    uint32_t scale_x = 1, scale_y = 1;
+    bool depth_stencil = true;           // a 24-bit depth, 8-bit stencil buffer
+    int gpu = -1;                        // index among the Vulkan devices; -1 picks the best one
+    bool validation = false;             // Vulkan validation layers, if installed (also QILIN_VK_VALIDATION=1)
+    // Where compiled pipelines are kept between runs (Vulkan's pipeline
+    // cache, saved as the driver gives it); empty for none.
+    std::string pipeline_cache;
+
+    // A window to show frames in; without one (create empty) frames are
+    // only kept, to read back. The renderer stays free of any windowing
+    // library: the window's side gives these.
+    struct Surface {
+        std::vector<const char*> instance_extensions;  // what the surface needs
+        void* loader = nullptr;                        // PFN_vkGetInstanceProcAddr to load Vulkan through, or null
+        std::function<uint64_t(void* instance, std::string* error)> create;  // a VkSurfaceKHR, 0 on failure
+        std::function<void(uint32_t* width, uint32_t* height)> size;        // the drawable size in pixels now
+    } surface;
+};
+
+// How the window shows the frame (the settings' [display] section).
+struct Picture {
+    // Whole multiples of the frame (the sharpest), the largest that keeps
+    // its shape, or the whole window.
+    enum class Scaling : uint8_t { Integer, Fit, Stretch } scaling = Scaling::Fit;
+    bool smooth = false;     // bilinear; off: sharp (whole texels as solid blocks, only the edges between them blended)
+    enum class Look : uint8_t { Plain, Crt } look = Look::Plain;
+    float scanlines = 0.6f;  // CRT: how dark the gaps between raster lines are, 0..1
+    float mask = 0.3f;       // CRT: the phosphor stripes' strength, 0..1
+    bool vsync = true;       // at the display's refresh, no tearing; off: the lowest latency
+    bool low_latency = true; // with vsync, the fewest swapchain images: at most one frame queued
+    // The shape the frame is shown at, width over height: 4:3, or 16:9 for a
+    // game drawing for a widescreen TV (squeezed into the same frame).
+    float aspect = 4.0f / 3.0f;
+    // AMD FidelityFX Super Resolution 1 where the frame is shown larger than
+    // it's drawn (not at whole multiples): edge-aware upscaling, then
+    // sharpening by `sharpness`, 0 (least) to 1 (most).
+    bool fsr = false;
+    float sharpness = 0.8f;
+    bool smaa = false;  // SMAA 1x anti-aliasing on the frame first
+    bool operator==(const Picture&) const = default;
+};
+
+// What a UI drawn over the window (the settings menu) needs to draw with
+// Vulkan, as plain handles so this header stays free of Vulkan's.
+struct Overlay {
+    void* instance = nullptr;         // VkInstance
+    void* physical_device = nullptr;  // VkPhysicalDevice
+    void* device = nullptr;           // VkDevice
+    uint32_t queue_family = 0;
+    void* queue = nullptr;            // VkQueue
+    uint32_t format = 0;              // the window images' VkFormat
+    uint32_t min_images = 2, images = 2;
+};
+
+struct Rect {
+    int32_t x = 0, y = 0;
+    uint32_t w = 0, h = 0;
+};
+
+enum ClearFlags : uint32_t { kClearColor = 1, kClearDepth = 2, kClearStencil = 4 };
+
+struct TextureData;
+
+// ---- Drawing. The enums are in Vulkan's order.
+enum class Primitive : uint8_t { Points, Lines, LineStrip, Triangles, TriangleStrip };
+enum class Compare : uint8_t { Never, Less, Equal, LessEqual, Greater, NotEqual, GreaterEqual, Always };
+enum class BlendFactor : uint8_t {
+    Zero, One, SrcColor, OneMinusSrcColor, DstColor, OneMinusDstColor, SrcAlpha, OneMinusSrcAlpha, DstAlpha,
+    OneMinusDstAlpha, ConstantColor, OneMinusConstantColor, ConstantAlpha, OneMinusConstantAlpha, SrcAlphaSaturate
+};
+enum class BlendOp : uint8_t { Add, Subtract, ReverseSubtract, Min, Max };
+enum class StencilOp : uint8_t { Keep, Zero, Replace, IncrementClamp, DecrementClamp, Invert, IncrementWrap, DecrementWrap };
+enum class Cull : uint8_t { None, Clockwise, CounterClockwise };  // which screen-space winding is culled
+enum class Filter : uint8_t { Nearest, Linear };
+enum class Address : uint8_t { Wrap, Mirror, Clamp, Border };
+
+struct SamplerDesc {
+    Filter mag = Filter::Linear, min = Filter::Linear, mip = Filter::Nearest;
+    bool mipmaps = false;
+    Address u = Address::Wrap, v = Address::Wrap, w = Address::Wrap;
+    uint32_t border = 0;  // A8R8G8B8
+    float lod_bias = 0;
+    uint32_t max_level = 0, anisotropy = 1;
+    bool operator==(const SamplerDesc&) const = default;
+};
+
+// One draw: shaders (SPIR-V, made once per key; code is read only the
+// first time a key is seen), fixed-function state, and its data: up to 16
+// vertex attributes as vec4 floats, optional 32-bit indices, the shader
+// uniforms (nv2a::kVsUniformVec4s and kFsUniformVec4s vec4s), textures.
+struct DrawCmd {
+    uint64_t vs_key = 0, fs_key = 0;
+    const std::vector<uint32_t>* vs_code = nullptr;
+    const std::vector<uint32_t>* fs_code = nullptr;
+    // What the two were made from (the vertex program, for the inputs
+    // below, and the combiners), if known: the renderer keeps them with each
+    // pipeline it makes, and makes those again early in the next run.
+    const vsh::Program* vs_program = nullptr;
+    const nv2a::CombinerSetup* fs_setup = nullptr;
+    uint32_t inputs = 0;  // attribute n present: bit n
+    Primitive primitive = Primitive::Triangles;
+
+    bool blend = false;
+    BlendFactor src_color = BlendFactor::One, dst_color = BlendFactor::Zero, src_alpha = BlendFactor::One, dst_alpha = BlendFactor::Zero;
+    BlendOp color_op = BlendOp::Add, alpha_op = BlendOp::Add;
+    uint8_t write_mask = 0xF;  // R G B A: bits 0-3
+    float blend_constant[4] = {};
+    // Polygon offset, as glPolygonOffset has it: the depth moves by
+    // depth_slope times the polygon's depth slope plus depth_bias times the
+    // depth buffer's smallest step (both 0: none).
+    float depth_bias = 0, depth_slope = 0;
+    // Lines' width in pixels of the target (1 where the device draws only
+    // thin lines: wide_lines()).
+    float line_width = 1;
+
+    bool depth_test = false, depth_write = false;
+    Compare depth_compare = Compare::LessEqual;
+    bool stencil_test = false;
+    Compare stencil_compare = Compare::Always;
+    StencilOp stencil_fail = StencilOp::Keep, stencil_depth_fail = StencilOp::Keep, stencil_pass = StencilOp::Keep;
+    uint8_t stencil_ref = 0, stencil_read_mask = 0xFF, stencil_write_mask = 0xFF;
+    Cull cull = Cull::None;
+    Rect scissor;
+
+    uint32_t vertex_count = 0;
+    const float* attributes[16] = {};
+    // An attribute already in the vertex arena (arena_alloc), at this byte
+    // offset, instead of `attributes`: kNoArena for none.
+    static constexpr uint64_t kNoArena = ~0ull;
+    // Attributes the same for every vertex (bit n: attributes[n] is one
+    // vec4, not one per vertex): read once per draw, not copied per vertex.
+    uint32_t constant_inputs = 0;
+    uint64_t arena[16] = {kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena,
+                          kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena, kNoArena};
+    const uint32_t* indices = nullptr;
+    uint32_t index_count = 0;
+    const float* vs_uniforms = nullptr;
+    const float* fs_uniforms = nullptr;
+    uint32_t textures[4] = {};  // from create_texture; 0 none
+    SamplerDesc samplers[4];
+};
+
+struct Image {  // 8-bit RGBA, rows top to bottom
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> rgba;
+};
+
+class Renderer {
+public:
+    // Creates the renderer on a Vulkan 1.3 device, or returns null with the
+    // reason in *error: no Vulkan library, no device, or a missing feature.
+    static std::unique_ptr<Renderer> create(const Config& config, std::string* error);
+    virtual ~Renderer() = default;
+
+    virtual const std::string& device_name() const = 0;  // "NVIDIA GeForce …", "llvmpipe (LLVM …)"
+    virtual const Config& config() const = 0;
+
+    // Clears the back buffer and/or the depth and stencil buffers: all of
+    // them (count 0) or the given rectangles. rgba is 0..1 per channel.
+    virtual void clear(const Rect* rects, uint32_t count, uint32_t flags, const float rgba[4], float depth,
+                       uint32_t stencil) = 0;
+
+    // Ends the frame: the back buffer becomes the front buffer (a flip, as
+    // D3D's Swap), and the oldest buffer becomes the new back buffer.
+    virtual void present() = 0;
+    // Shows the front buffer again, with the overlay (a paused game's
+    // frame under the menu); no flip.
+    virtual void present_again() = 0;
+    // Takes the window's next image now, for the next present: with vsync
+    // that waits until the display has a free one (its refresh), so the game
+    // reads its input for the next frame just after it. False where there's
+    // no window or nothing was waited for.
+    virtual bool acquire_early() = 0;
+    virtual uint64_t frames_presented() const = 0;
+    // How the window shows frames, from the next one shown.
+    virtual void set_picture(const Picture& p) = 0;
+    virtual const Picture& picture() const = 0;
+    // Anisotropic filtering for the game's textures: 1 (the console's: none)
+    // to max_anisotropy().
+    virtual void set_anisotropy(uint32_t level) = 0;
+    virtual uint32_t max_anisotropy() const = 0;
+    // The window's Vulkan objects for a UI drawn over it; false without a
+    // window (or before the first frame shown).
+    virtual bool overlay(Overlay& out) const = 0;
+    // Called with the command buffer (a VkCommandBuffer) inside the pass that
+    // draws the frame into the window, after the frame; empty for none.
+    virtual void set_overlay(std::function<void(void* command_buffer)> draw) = 0;
+
+    // The frame buffers are numbered 0 … back_buffers; these say which is which now.
+    virtual uint32_t back_index() const = 0;
+    virtual uint32_t front_index() const = 0;
+    // Submits what's recorded and waits for the GPU to finish it.
+    virtual void flush() = 0;
+
+    // Reads a frame buffer back: the front buffer (the last frame presented)
+    // or the back buffer as drawn so far.
+    virtual Image read_front_buffer() = 0;
+    virtual Image read_back_buffer() = 0;
+    // Frame buffer `index` (0 … back_buffers, as back_index and front_index
+    // number them), read back or written from the CPU: on the Xbox they're
+    // memory the title can lock and write. show_front shows the front
+    // buffer again after such a write.
+    virtual Image read_frame_buffer(uint32_t index) = 0;
+    virtual void write_frame_buffer(uint32_t index, const Image& image) = 0;
+    virtual void show_front() = 0;
+    // The display's gamma ramp (D3D's SetGammaRamp): red, green and blue
+    // tables every frame shown goes through on its way to the window.
+    virtual void set_gamma_ramp(const uint8_t ramp[3][256]) = 0;
+
+    // Textures: made from decoded texels (texture.hpp), named by a non-zero id.
+    virtual uint32_t create_texture(const TextureData& data) = 0;
+    // Whether create_texture takes BC1-3 blocks (TextureData::blocks): the
+    // GPU samples them (desktop GPUs, Apple's); else they're decoded first.
+    virtual bool takes_blocks() const = 0;
+    // Whether lines wider than a pixel are drawn (Vulkan's wideLines).
+    virtual bool wide_lines() const = 0;
+    // New texels for a texture made by create_texture, of the same shape,
+    // into its image (draws recorded before see the old ones); false, and
+    // nothing done, for another shape.
+    virtual bool update_texture(uint32_t id, const TextureData& data) = 0;
+    virtual void destroy_texture(uint32_t id) = 0;
+
+    // The vertex arena: GPU-visible memory for vertex data that stays the
+    // same from frame to frame, written once by the CPU and drawn from as
+    // often as wanted (DrawCmd::arena), instead of copied in with every
+    // draw. arena_alloc gives `bytes` (16-byte aligned) and where to write
+    // them, or false when there's no room; arena_free gives them back once
+    // the GPU is done with what was submitted so far. Memory just allocated
+    // isn't in use by the GPU.
+    virtual bool arena_alloc(uint64_t bytes, uint64_t* offset, void** write) = 0;
+    virtual void arena_free(uint64_t offset, uint64_t bytes) = 0;
+
+    // Draws into the back buffer.
+    virtual void draw(const DrawCmd& cmd) = 0;
+
+    // Rendering into textures: a texture (an id like create_texture's, which
+    // draws can sample and destroy_texture frees) that draws and clears go to
+    // while it's the render target. 0 is the back buffer, with the depth
+    // buffer. `depth` is what goes with a texture target: 0 none, kDeviceDepth
+    // the depth buffer, or a depth target (create_depth_target), any of them
+    // at least the target's size. A draw can't sample the texture it draws into.
+    static constexpr uint32_t kDeviceDepth = 0xFFFFFFFFu;
+    virtual uint32_t create_render_target(uint32_t width, uint32_t height) = 0;
+    // A depth and stencil buffer of the depth buffer's format, cleared to zero;
+    // destroy_texture frees it.
+    virtual uint32_t create_depth_target(uint32_t width, uint32_t height) = 0;
+    virtual void set_render_target(uint32_t id, uint32_t depth) = 0;
+    // A depth target's depth and stencil written into a render target (of
+    // the same size or smaller) as the console's memory holds a D24S8
+    // surface, each texel one 32-bit word: alpha, red and green the depth's
+    // bytes from the top (the range 0 to 1 as 0 to 0xFFFFFF), blue the
+    // stencil. For a draw that reads a depth surface as a colour texture.
+    // False where the device can't sample its depth format.
+    virtual bool pack_depth(uint32_t depth_target, uint32_t render_target) = 0;
+    // A render target's pixels read back, or written from the CPU (an image
+    // of its size): its texels as the guest's memory has them.
+    virtual Image read_render_target(uint32_t id) = 0;
+    virtual void write_render_target(uint32_t id, const Image& image) = 0;
+    // Rectangles of a frame buffer (by index, as back_index and front_index
+    // number them) copied into a render target, unscaled, on the GPU: after
+    // what was drawn into the frame buffer, before what's drawn after. Each
+    // rectangle must lie inside both.
+    struct CopyRegion {
+        uint32_t sx = 0, sy = 0, width = 0, height = 0, dx = 0, dy = 0;
+    };
+    virtual void copy_frame_to_target(uint32_t frame_index, uint32_t target_id, const std::vector<CopyRegion>& regions) = 0;
+
+    // Validation messages of error severity so far (0 without the layers).
+    virtual uint32_t validation_errors() const = 0;
+    // What the renderer spent since the last call on work a frame can't
+    // count on: pipelines made for draws (the GPU's compiler) and textures
+    // made or written. For the long-frame log.
+    struct Costs {
+        uint32_t pipelines = 0, textures = 0;
+        double pipeline_ms = 0, texture_ms = 0;
+    };
+    virtual Costs take_costs() = 0;
+    // The render resolution (Config's scale_x, scale_y): every frame buffer
+    // and render target made again at the new size, their pictures scaled
+    // into it (depth starts cleared). Clears, scissors, copies, line widths
+    // and points are in the game's pixels and scaled here; reading a target
+    // back gives it at the game's size (each pixel the average of the ones it
+    // became), and writing one scales it up.
+    virtual void set_resolution_scale(uint32_t x, uint32_t y) = 0;
+    virtual uint32_t resolution_scale_x() const = 0;
+    virtual uint32_t resolution_scale_y() const = 0;
+};
+
+// Writes an image as a PNG (uncompressed). False if the file can't be written.
+bool write_png(const std::string& path, const Image& image);
+
+}  // namespace qilin::gfx

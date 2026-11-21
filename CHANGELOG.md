@@ -2,6 +2,27 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.2.0] - 2026-11-21
+
+The console-level half of the runtime, from the sister project, and the settings menu on a test card. Still nothing from the game: no copy of it has been available.
+
+### Added
+- The renderer (`recomp/runtime/gfx/`): Vulkan 1.3 through volk, NV2A vertex programs and pixel combiners as generated SPIR-V, textures, the present pass with whole-multiple, fit and fill scaling, sharp or smooth pixels, AMD FSR 1, SMAA, the CRT look, vsync and low-latency pacing, render-resolution scaling, anisotropic filtering, the pipeline cache. From GBTGhoulies-QilinRecomp v0.41.2, unchanged; its tests run on Mesa's software driver in CI.
+- The audio engine (`recomp/runtime/audio/`): PCM and Xbox ADPCM voices, the 48 kHz mixer, reverb. Unchanged, with its tests.
+- The platform layer (`recomp/runtime/platform/`): the window, controllers and the keyboard, sound output, through SDL3; and the settings file, `wildhorserescue.ini`, key for key the sister project's.
+- The settings menu (`recomp/runtime/ui/`, Dear ImGui): the same menu as the other recomps, item for item GBTGhoulies-QilinRecomp's, under this game's name.
+- `qilin_menu_preview`: the window, the present pass and the menu over a test card, reading and writing the real settings file, so the menu and the picture settings can be tried before the game runs. CI runs it for 30 frames with the menu open on a virtual display.
+- Tests for the settings file: what is written reads back the same, every key and control is there, unreadable lines are named and left at their defaults.
+- `platform::default_data_folder()`: `<per-user data>/qilin/wildhorserescue`.
+
+### Changed (from the sister project's code)
+- The language setting accepts every console language (1 to 6) and the menu lists them: which the disc has is not known yet. The list is cut to the disc's before the menu reaches a player.
+- The frame-rate setting's first choice reads "Original (the console's)": whether the game runs at 30 or 60 is not known yet.
+- The `[console] widescreen` key (a setting of that project's v0.36) is not read.
+
+### Fixed (from the sister project's code)
+- `channels = 4` (or any refused number from 0 to 6) was reported as left at its default but kept. It is now left at its default.
+
 ## [0.1.0] - 2026-11-21
 
 The start of the project: the tools that read the game. Nothing runs yet, and the tools have not read the game yet: no copy of it was available, so every check is on synthetic files.

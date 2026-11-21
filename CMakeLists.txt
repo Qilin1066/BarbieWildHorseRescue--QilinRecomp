@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue-QilinRecomp VERSION 0.1.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue-QilinRecomp VERSION 0.2.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -147,3 +147,86 @@ qilin_tool_test(not_a_game "not an Xbox disc image" info ${CMAKE_CURRENT_SOURCE_
 add_executable(qilin_x87_consistency tools/check/x87/consistency.cpp)
 target_link_libraries(qilin_x87_consistency PRIVATE qilin_runtime qilin_warnings)
 add_test(NAME qilin_x87_consistency COMMAND qilin_x87_consistency 200000)
+
+# ---- Renderer: Vulkan 1.3, loaded at run time through volk (no SDK or link-time Vulkan needed) ----
+add_library(qilin_volk STATIC third_party/volk/volk.c)
+target_include_directories(qilin_volk PUBLIC third_party/volk third_party/vulkan-headers/include)
+target_link_libraries(qilin_volk PUBLIC ${CMAKE_DL_LIBS})
+add_library(qilin_gfx STATIC recomp/runtime/gfx/renderer.cpp recomp/runtime/gfx/fsr/fsr_constants.cpp recomp/runtime/gfx/png.cpp recomp/runtime/gfx/vsh.cpp
+    recomp/runtime/gfx/spirv.cpp recomp/runtime/gfx/nv2a_vs.cpp recomp/runtime/gfx/nv2a_ps.cpp recomp/runtime/gfx/texture.cpp)
+target_include_directories(qilin_gfx PUBLIC recomp/runtime/gfx PRIVATE recomp/runtime)
+target_link_libraries(qilin_gfx PUBLIC qilin_volk PRIVATE qilin_warnings)
+add_executable(qilin_gfx_tests recomp/runtime/gfx/gfx_tests.cpp)
+target_link_libraries(qilin_gfx_tests PRIVATE qilin_gfx qilin_warnings)
+add_test(NAME qilin_gfx_tests COMMAND qilin_gfx_tests)
+set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+# ---- Audio engine: voices and the software mixer ----
+add_library(qilin_audio STATIC recomp/runtime/audio/voice.cpp recomp/runtime/audio/reverb.cpp)
+target_include_directories(qilin_audio PUBLIC recomp/runtime/audio)
+target_link_libraries(qilin_audio PRIVATE qilin_warnings)
+add_executable(qilin_audio_tests recomp/runtime/audio/audio_tests.cpp)
+target_link_libraries(qilin_audio_tests PRIVATE qilin_audio qilin_warnings)
+add_test(NAME qilin_audio_tests COMMAND qilin_audio_tests)
+
+# ---- Platform: the window, input and audio output, through SDL3 ----
+# A system SDL3 (3.2 or later) is used if CMake finds one; otherwise a pinned
+# release is fetched and built static, with only what the runtime uses.
+option(QILIN_SYSTEM_SDL "Use an installed SDL3 if there is one" ON)
+if(QILIN_SYSTEM_SDL)
+    find_package(SDL3 3.2 CONFIG QUIET COMPONENTS SDL3)
+endif()
+if(NOT TARGET SDL3::SDL3)
+    include(FetchContent)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    set(SDL_RENDER OFF CACHE BOOL "" FORCE)   # the runtime draws with its own Vulkan renderer
+    set(SDL_GPU OFF CACHE BOOL "" FORCE)
+    set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+    set(SDL_DIALOG OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL3
+        URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz
+        URL_HASH SHA256=f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f
+        DOWNLOAD_EXTRACT_TIMESTAMP ON
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(SDL3)
+endif()
+add_library(qilin_platform STATIC recomp/runtime/platform/window.cpp recomp/runtime/platform/input.cpp recomp/runtime/platform/settings.cpp
+    recomp/runtime/platform/audio_out.cpp)
+target_include_directories(qilin_platform PUBLIC recomp/runtime/platform)
+target_link_libraries(qilin_platform PUBLIC SDL3::SDL3 PRIVATE qilin_warnings)
+
+# ---- The settings menu: Dear ImGui (MIT, vendored as ApbArcade-QilinRecomp has it) over the window ----
+add_library(qilin_imgui STATIC
+    third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_sdl3.cpp
+    third_party/imgui/backends/imgui_impl_vulkan.cpp)
+target_include_directories(qilin_imgui PUBLIC third_party/imgui third_party/imgui/backends)
+target_compile_definitions(qilin_imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+target_link_libraries(qilin_imgui PUBLIC qilin_volk SDL3::SDL3)
+if(MSVC)
+    target_compile_options(qilin_imgui PRIVATE /W0)
+else()
+    target_compile_options(qilin_imgui PRIVATE -w)
+endif()
+add_library(qilin_ui STATIC recomp/runtime/ui/menu.cpp)
+target_include_directories(qilin_ui PUBLIC recomp/runtime/ui)
+target_link_libraries(qilin_ui PUBLIC qilin_gfx qilin_platform qilin_imgui PRIVATE qilin_warnings)
+target_compile_definitions(qilin_ui PRIVATE QILIN_VERSION="${PROJECT_VERSION}")
+# The menu on a test card, without the game: for trying the menu and the picture settings.
+add_executable(qilin_menu_preview recomp/runtime/ui/menu_preview.cpp)
+target_link_libraries(qilin_menu_preview PRIVATE qilin_ui qilin_warnings)
+# Run for a few frames with the menu open, where there is a display and Vulkan (else skipped).
+add_test(NAME qilin_menu_preview COMMAND qilin_menu_preview --data-dir ${CMAKE_BINARY_DIR}/preview-data --frames 30 --open-menu)
+set_tests_properties(qilin_menu_preview PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+add_executable(qilin_settings_tests recomp/runtime/platform/settings_tests.cpp)
+target_link_libraries(qilin_settings_tests PRIVATE qilin_platform qilin_warnings)
+add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
+
+# The runtime's host side (the kernel, Direct3D, DirectSound and the game's
+# own replacements) and qilin_run come with roadmap step 3, from
+# GBTGhoulies-QilinRecomp, once the game has been analysed.

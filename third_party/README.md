@@ -6,9 +6,14 @@
 | [Zycore](https://github.com/zyantific/zycore-c) | `0b2432ced0884fd152b471d97ecf0258ff4d859f` (Zydis v4.1.1 submodule) | MIT | `zydis/dependencies/zycore/` | Zydis support library |
 | [nxdk](https://github.com/XboxDev/nxdk) | `lib/xboxkrnl/xboxkrnl.exe.def` at `fafbe41b48fa00a31b79dd49ad1f86a30adcdd9e` | CC0-1.0 | `nxdk/xboxkrnl.exe.def` | Xbox kernel export names, ordinals and argument sizes; `tools/gen/kernel_exports.py` turns it into `recomp/src/kernel_exports.inc` |
 
-These are the copies GBTGhoulies-QilinRecomp vendors, unchanged. The runtime's
-libraries (the Vulkan headers, volk, Dear ImGui, FSR 1, SMAA, SDL3) arrive
-with the runtime, handled as that project handles them.
+| [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | `vulkan-sdk-1.3.296.0` | Apache-2.0 OR MIT | `vulkan-headers/` | The Vulkan C headers (`include/vulkan/*.h`, `include/vk_video/*.h`); the C++ bindings were dropped |
+| [Dear ImGui](https://github.com/ocornut/imgui) | `v1.93.0` (`c1aaac65e896a45f81f47a4d68f9959e0f86c859`) | MIT (Omar Cornut) | `imgui/` | The settings menu (`recomp/runtime/ui/menu.cpp`), as ApbArcade-QilinRecomp vendors it: the core (`imgui*.cpp`, `imgui*.h`, `imconfig.h`, the three `imstb_*.h`) and two backends (`backends/imgui_impl_sdl3.*`, `backends/imgui_impl_vulkan.*`, with the shaders' GLSL sources in `backends/vulkan/`), all unmodified. Built with `IMGUI_IMPL_VULKAN_USE_VOLK` so it loads Vulkan through volk as the renderer does |
+| [FidelityFX FSR 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) | `a21ffb8f6c13233ba336352bdff293894c706575` (FSR 1.0) | MIT (AMD) | `fsr1/` | AMD FidelityFX Super Resolution 1 for the present pass: `ffx_a.h` and `ffx_fsr1.h`, unmodified, with `LICENSE.txt`. `recomp/runtime/gfx/fsr/fsr.comp` includes them for its two compute passes, which `tools/gen/fsr_spirv.sh` compiles to SPIR-V once (`fsr_spirv.inc`, committed); `fsr_constants.cpp` builds them for the CPU for the passes' constants |
+| [SMAA](https://github.com/iryoku/smaa) | `71c806a838bdd7d517df19192a20f0c61b3ca29d` | MIT (Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez) | `smaa/` | SMAA 1x anti-aliasing for the present pass: `SMAA.hlsl` and the area and search tables (`AreaTex.h`, `SearchTex.h`), unmodified, with `LICENSE.txt`. `recomp/runtime/gfx/smaa/smaa.glsl` includes it (at the HIGH preset, every sample at level 0) for its three passes, which `tools/gen/smaa_spirv.sh` compiles to SPIR-V once (`smaa_spirv.inc`, committed); the renderer includes the two tables |
+| [volk](https://github.com/zeux/volk) | `vulkan-sdk-1.3.296.0` | MIT | `volk/` | Loads the Vulkan library at run time: no Vulkan SDK needed to build, and a clear message where there's no Vulkan |
+| [SDL3](https://github.com/libsdl-org/SDL) | 3.4.20 (not vendored) | zlib | | The window, input and sound output. An installed SDL3 (3.2 or later) is used if CMake finds one; otherwise this release is fetched, checked against its SHA-256 and built static |
+
+These are the copies GBTGhoulies-QilinRecomp vendors, unchanged. XbSymbolDatabase (MIT), which names the XDK library functions, arrives with the runtime's host side.
 
 Vendored as plain source (no submodules) so a clone builds offline on every
 platform. Only `CMakeLists.txt`, `cmake/`, `include/`, `src/`, `LICENSE` and

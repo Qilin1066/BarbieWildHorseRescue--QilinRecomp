@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies-Qili
 
 ## Status
 
-**It doesn't run the game yet, and the tools have not yet read the game.** v0.1.0 is the recompiler core, brought over from GBTGhoulies-QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
+**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level half of the runtime (renderer, sound, window, input, the settings menu), brought over from GBTGhoulies-QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
 
 | Piece | State |
 |---|---|
@@ -19,8 +19,10 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies-Qili
 | Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | ✅ carried over; not yet run on the game |
 | What the analysis has established about the game (`recomp/src/game.hpp`) | empty: nothing is assumed from another game |
 | Differential test of every lifted function against the original x86 | to do, with the game |
-| Runtime: the kernel and the XDK libraries replaced natively, Vulkan 1.3, SDL3 | to do |
-| Enhancements (resolution, widescreen, high refresh rate) and the settings menu shared with the sister projects | to do, after the game plays at original spec |
+| Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies-QilinRecomp (v0.2.0), with their tests; not yet driven by the game |
+| The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
+| Runtime host side: the kernel and the XDK libraries replaced natively, `qilin_run` | to do: it depends on the analysis |
+| Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 
 ## Versions and changes
 
@@ -41,7 +43,17 @@ The whole project is **C++23**. You need CMake ≥ 3.25 and one of:
 | Apple Clang | Xcode 16 | |
 | MSVC | Visual Studio 2022 17.10 | |
 
-CMake stops with a clear message if the compiler is older. There are no other dependencies yet (Zydis is vendored).
+CMake stops with a clear message if the compiler is older.
+
+The one other dependency is **SDL3** (window, input, audio output). CMake uses an installed SDL3 (3.2 or later) if it finds one; otherwise it downloads SDL 3.4.20 (checked against its SHA-256) and builds it static, which needs network access once. On Linux, SDL needs the development headers of what it supports, or the build has no window or sound there. On Debian, Ubuntu and Raspberry Pi OS:
+
+```sh
+sudo apt install libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+    libwayland-dev libxkbcommon-dev wayland-protocols libdecor-0-dev libegl-dev \
+    libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev
+```
+
+Windows and macOS need nothing more.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -68,6 +80,8 @@ build/qilin insns    <game> [--linear] -o listing.txt
 build/qilin lift     <game> --out gen/          # lift to C++ (gen/ is gitignored: never commit it)
 ```
 
+`build/qilin_menu_preview` opens the game's window with a test card and the settings menu (F1 or Esc), with no game needed: the menu, the picture settings and the keys can be tried, and they are kept in the real settings file.
+
 Code that compiles lifted C++ must link the `qilin_runtime` CMake target (or pass `-ffp-contract=off`): SSE results are only bit-exact without fused multiply-add.
 
 ## Layout
@@ -76,15 +90,19 @@ Code that compiles lifted C++ must link the `qilin_runtime` CMake target (or pas
 |---|---|
 | `recomp/src/` | Recompiler core: `xiso` (disc images), `xbe` loader, `sha256`, `decoder` (Zydis wrapper), `cfg` and `vrange` (function discovery, control flow, jump-table sizes), `lifter` (x86 → C++), `game.hpp` (the supported build's facts), `main` (the CLI) |
 | `recomp/runtime/` | Runtime headers the generated C++ includes (guest memory, flag and float helpers, x87 maths) |
+| `recomp/runtime/gfx/` | The renderer: Vulkan 1.3, loaded at run time |
+| `recomp/runtime/audio/` | The audio engine: voices (PCM, Xbox ADPCM) and the 48 kHz mixer |
+| `recomp/runtime/platform/` | The window, the controllers and sound output, through SDL3; the settings file |
+| `recomp/runtime/ui/` | The settings menu, and `qilin_menu_preview` |
 | `recomp/tests/` | Unit tests on a synthetic in-memory XBE and disc image, so they need no game files |
 | `tools/check/` | The LLVM decoder cross-check and the x87 rounding and transcendental cross-checks |
 | `tools/analyse-game.ps1` | What `Analyse game.bat` runs |
-| `third_party/` | Vendored dependencies: Zydis and Zycore (MIT), nxdk's kernel export list (CC0). See `third_party/README.md` |
+| `third_party/` | Vendored dependencies: Zydis and Zycore, Dear ImGui, FSR 1, SMAA and volk (MIT), the Vulkan headers (Apache-2.0 or MIT), nxdk's kernel export list (CC0). See `third_party/README.md` |
 | `docs/` | Design notes: the roadmap and every design target, the recompiler core, naming, prior art, the analysis (pending) |
 
 ## Licence
 
-This project's own code and documentation are under the [GNU General Public License, version 3](LICENSE) (GPL-3.0), as in the other QilinRecomp projects: you may use, share, change and sell it, but anything you distribute that is built from it must come with its full source under the same licence. The vendored code in `third_party/` keeps its own licences, listed in `third_party/README.md`.
+This project's own code and documentation are under the [GNU General Public License, version 3](LICENSE) (GPL-3.0), as in the other QilinRecomp projects: you may use, share, change and sell it, but anything you distribute that is built from it must come with its full source under the same licence. The vendored code in `third_party/` keeps its own licences, listed in `third_party/README.md`. SDL3, fetched by CMake at build time, keeps its zlib licence.
 
 The game itself belongs to its owners (Mattel, Vivendi Universal Games, Blitz Games) and is not covered by anything here: you need your own copy, and nothing built from it may be shared.
 
