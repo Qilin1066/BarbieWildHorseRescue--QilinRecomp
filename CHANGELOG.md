@@ -4,6 +4,16 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+### Added
+- `qilin_run --press SCRIPT`: controller presses on port 1 by frame shown (`FRAME:BUTTONS[/FRAMES],...`, e.g. `2300:start/10,2700:a/10`), for runs with no one at the controls. With it the game goes from the title screen through the main menu, the New Adventure movie and loading, into the stables yard and the dressing room, and runs there for at least 13 minutes without a stop.
+- **Fixed-function lighting**: directional, point and spot lights, the four colour sources (the material's or the vertex's colours with `D3DRS_COLORVERTEX`), global ambient, attenuation and range, the spot cone, normals through the inverse transpose of world × view, `D3DRS_NORMALIZENORMALS`; generated into the fixed-function vertex program. Specular and two-sided lighting still stop the runtime.
+
+### Fixed
+- **Threads started with a zeroed x87 control word**: `qilin_run` set the first thread's (`0x027F`) only after the scheduler had copied its registers as the start of every later thread and of DPCs, so those ran with every floating-point exception unmasked and single-precision rounding. The C runtime's `floor`/`ceil` then raised an inexact-result exception on the main thread as the menu opened. (The sister project's runner has the same order.)
+- **Depth testing was off for the whole game**: Direct3D's default state sets `D3DRS_ZENABLE` to whether the device has an automatic depth buffer, which this build reads from the device's `+0x1A10`; the layer, written for another XDK build, never filled it. Barbie was painted over by the room in the dressing room.
+- **The frame buffers flip as this build does it**: its `Swap` (`0x174600`) keeps each surface object in its role (back, front) and moves the memory along, where the layer (after the sister's build) moved the roles. The game keeps the back buffer's surface and sets it as its render target every frame, which then pointed at the front buffer.
+- The performance overlay and `QILIN_FPS` read the sister game's time step at its address; they no longer do (this game's isn't located).
+
 ## [0.8.0] - 2026-11-21
 
 Pictures: Direct3D over Vulkan, the window and the settings menu. The game runs from power-on through its logos and intro movie (with sound) to its title screen, "Press START to begin", and stays there, animated.

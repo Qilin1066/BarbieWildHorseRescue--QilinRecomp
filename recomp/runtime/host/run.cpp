@@ -87,6 +87,12 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "qilin_run: --audio-channels takes 2 or 6\n");
                 return 2;
             }
+        } else if (a == "--press" && k + 1 < argc) {
+            std::string why;
+            if (!host::set_input_script(argv[++k], &why)) {
+                std::fprintf(stderr, "qilin_run: --press: %s\n", why.c_str());
+                return 2;
+            }
         } else if (a == "--headless") {
             headless = true;
         } else if (a == "--fullscreen") {
@@ -109,7 +115,7 @@ int main(int argc, char** argv) {
     if (!path) {
         std::fprintf(stderr,
                      "usage: qilin_run [--ram-mb N] [--game-dir DIR] [--data-dir DIR] [--dump-audio FILE.wav] [--mute] [--audio-channels 2|6]\n"
-                     "                 [--headless] [--fullscreen] [--dump-frames DIR] [--frames N] [--gpu N] [--any-build] <game>\n"
+                     "                 [--headless] [--fullscreen] [--dump-frames DIR] [--frames N] [--press SCRIPT] [--gpu N] [--any-build] <game>\n"
                      "  <game>           an extracted disc's folder, or its default.xbe\n"
                      "  --ram-mb N       guest RAM in MB (%u by default, as the retail Xbox)\n"
                      "  --game-dir DIR   the extracted disc (default: default.xbe's directory)\n"
@@ -121,6 +127,7 @@ int main(int argc, char** argv) {
                      "  --fullscreen     start full screen\n"
                      "  --dump-frames DIR  write each frame shown there as frame_NNNNN.png\n"
                      "  --frames N       stop after N frames\n"
+                     "  --press SCRIPT   controller presses on port 1 by frame: FRAME:BUTTONS[/FRAMES],... (e.g. 2100:start/8)\n"
                      "  --gpu N          the Vulkan device to draw with, by index (default: the best)\n"
                      "  --any-build      run an executable that is not the supported build\n",
                      host::kRetailRamMb, platform::default_data_folder().string().c_str());
@@ -280,8 +287,11 @@ int main(int argc, char** argv) {
     // StackBase, and starts the stack under it.
     const uint32_t tls = tls_size(m, xbe.tls_addr);
     host::init_main_thread(c, mm.kpcr(), mm.kthread(), mm.stack_top(), host::MemoryMap::kStackSize, tls);
-    host::sched::init_main(c, mm.kthread(), host::call_guest);
+    // Before init_main, which copies these registers as the starting state of
+    // every thread created later and of DPCs: the kernel starts each thread
+    // with this control word (all exceptions masked, 53-bit precision).
     c.fpcw = 0x027F;
+    host::sched::init_main(c, mm.kthread(), host::call_guest);
     c.esp = (mm.stack_top() - tls) & ~15u;
     push(c, host::kReturnSentinel);
     host::set_current(&c);

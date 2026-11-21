@@ -23,6 +23,7 @@
 namespace qilin::platform {
 class Window;
 class Input;
+struct PadState;
 class AudioOut;
 struct Settings;
 }
@@ -197,6 +198,21 @@ void register_game_natives();
 
 // XInput (xinput.cpp): the controller ports, over `input` (null: nothing plugged in).
 void register_xinput(platform::Input* input);
+
+// Scripted controller presses (qilin_run --press), on port 1 over whatever
+// a real controller there does: comma-separated FRAME:BUTTONS[/FRAMES],
+// BUTTONS one or more of a b x y black white lt rt up down left right
+// start back ls rs joined by +, held from frame FRAME (counted as frames
+// are shown) for FRAMES (default 6). False, with why, if it doesn't parse.
+bool set_input_script(std::string_view script, std::string* why);
+// Port `port`'s state with the script's presses for the frame now shown
+// added, and the ports the script plugs in (bit n: port n).
+platform::PadState with_script(uint32_t port, platform::PadState s);
+uint32_t scripted_ports();
+// Frames shown so far (Swap or an overlay update), for the script; the
+// Direct3D layer counts each with frame_shown().
+uint64_t frames_shown();
+void frame_shown();
 // The kernel replacements, registered at kernel_addr(ordinal) (kernel.cpp).
 void register_kernel();
 void register_kernel_crypto();  // XcSHA*, XcHMAC (kernel_crypto.cpp); register_kernel calls it

@@ -96,6 +96,16 @@ int main() {
     CHECK(e && std::string(e->name) == "KfRaiseIrql" && e->fastcall);
     CHECK(host::kernel_export(0) == nullptr && host::kernel_export(4000) == nullptr);
     CHECK(host::describe(host::kernel_addr(190)) == "kernel NtCreateFile (ordinal 190)");
+    // qilin_run --press: scripted controller presses.
+    {
+        std::string why;
+        CHECK(host::set_input_script("2300:start/10,2700:a+up,10:rt/1", &why));
+        CHECK(!host::set_input_script("2300:jump", &why) && why.find("jump") != std::string::npos);
+        CHECK(!host::set_input_script("start", &why));
+        CHECK(!host::set_input_script("5:a/0", &why));
+        CHECK(!host::set_input_script("5:", &why));
+        CHECK(host::set_input_script("", &why));  // none: no scripted controller
+    }
     host::set_regions({{0x11000, 0x14A840, "game"}});
     CHECK(host::describe(0x12345) == "game code at 00012345");
 

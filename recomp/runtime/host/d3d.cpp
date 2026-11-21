@@ -291,6 +291,11 @@ void mirror_device(rt::Context& c, const Device& d) {
     st(c, kDeviceStorage + kDevFrameBuffers + 4, d.frame_buffers[d.renderer->front_index()]);
     st(c, kDeviceStorage + kDevFrameBuffers + 8, n > 2 ? d.frame_buffers[(back + 1) % n] : 0);
     st(c, kDeviceStorage + kDevMultisample, kMultisampleNone);
+    // The automatic depth-stencil surface (0 without one), where this
+    // build's device set-up keeps it (+0x1A10, 0x16CC83): its default state
+    // (0x16C5D0) sets D3DRS_ZENABLE to whether there is one, so without this
+    // every title that never sets ZENABLE itself draws without depth.
+    st(c, kDeviceStorage + 0x1A10, d.depth);
     // The multisample type's horizontal and vertical sample factors as
     // floats (+0x968, +0x96C), as the original's frame-buffer set-up keeps
     // them: D3D_CommonSetMultiSampleModeAndScale derives the scale from them.
@@ -444,6 +449,7 @@ void frame_pacing(rt::Context& c, Device& d) {
 // ---------------------------------------------------------------- frames out
 void deliver_frame(Device& d) {
     const uint64_t n = ++d.frames_shown;
+    frame_shown();
     static const char* trace_dir = std::getenv("QILIN_TRACE_DUMP");
     if (!d.config.dump_dir.empty() || (trace_dir && trace_draws(d) && std::exchange(g_trace_matched, false))) {
         gfx::Image im = d.renderer->read_front_buffer();
@@ -1043,12 +1049,38 @@ void swap(rt::Context& c) {
         ret(c, d.swaps, 4);
         return;
     }
-    const uint32_t old_back = d.frame_buffers[d.renderer->back_index()];
+    // The surface objects by role, as the device's array holds them: the
+    // back buffer, the front buffer, the next (with two back buffers).
+    const uint32_t n_fb = uint32_t(d.frame_buffers.size()), was_back = d.renderer->back_index();
+    std::vector<uint32_t> roles = {d.frame_buffers[was_back], d.frame_buffers[d.renderer->front_index()]};
+    if (n_fb > 2) roles.push_back(d.frame_buffers[(was_back + 1) % n_fb]);
     if (!d.cpu_frames.empty()) flush_cpu_frames(c, d);
     d.cpu_frames.clear();  // a lock lasts until the next Swap
     if (d.menu) d.menu->tick();  // what's drawn over this frame (the hint, the frame rate counter)
     const auto present_from = std::chrono::steady_clock::now();
     d.renderer->present();
+    // The flip as this build's Swap does it (0x174600): the surface objects
+    // keep their roles and the memory moves, each object's Data and the
+    // field after it (+4, +8) going one place along the array, the back
+    // buffer's to the front buffer, the last's to the back buffer. A title
+    // that keeps the back buffer's surface (as this one does, setting it as
+    // the render target each frame) keeps drawing into the back buffer. The
+    // objects follow the renderer's images: frame_buffers[i] stays the
+    // object over image i's memory.
+    {
+        const rt::Mem m = mem(c);
+        const uint32_t last4 = rt::ld32(m, roles.back() + 4, 0), last8 = rt::ld32(m, roles.back() + 8, 0);
+        for (size_t k = roles.size() - 1; k > 0; --k) {
+            rt::st32(m, roles[k] + 4, rt::ld32(m, roles[k - 1] + 4, 0), 0);
+            rt::st32(m, roles[k] + 8, rt::ld32(m, roles[k - 1] + 8, 0), 0);
+        }
+        rt::st32(m, roles[0] + 4, last4, 0);
+        rt::st32(m, roles[0] + 8, last8, 0);
+        const uint32_t back = d.renderer->back_index();
+        d.frame_buffers[back] = roles[0];
+        d.frame_buffers[d.renderer->front_index()] = roles[1];
+        if (n_fb > 2) d.frame_buffers[(back + 1) % n_fb] = roles[2];
+    }
     if (d.menu && d.config.settings && d.config.settings->performance_overlay) {
         const auto now = std::chrono::steady_clock::now();
         if (d.last_shown.time_since_epoch().count()) {
@@ -1061,7 +1093,7 @@ void swap(rt::Context& c) {
             std::vector<std::string> details;
             details.push_back(hz > 0 ? strf("target: %s  (display %.0f Hz)", rate, double(hz)) : strf("target: %s", rate));
             details.push_back(strf("vsync %s%s", d.picture.vsync ? "on" : "off", d.picture.vsync && d.picture.low_latency ? ", low latency" : ""));
-            details.push_back(strf("game time step %.2f ms", double(std::bit_cast<float>(ld(c, unlocated(0x5096C0)))) * 1000.0));
+            // (The sister game shows its time step here; this game's isn't located yet.)
             d.menu->frame_shown(std::chrono::duration<double, std::milli>(now - d.last_shown).count(), std::move(details));
         }
         d.last_shown = now;
@@ -1101,15 +1133,7 @@ void swap(rt::Context& c) {
     d.flat_before.swap(d.flat_now);
     d.flat_now.clear();
     if (d.swaps % 64 == 0) sweep_vertex_runs(d, 120);  // runs not drawn for 4 seconds leave the vertex arena
-    // A render target that was the back buffer becomes the new one (the
-    // device's internal reference moves with it).
-    if (ld(c, kDeviceStorage + kDevRenderTarget) == old_back) {
-        const uint32_t now = d.frame_buffers[d.renderer->back_index()];
-        host::call_guest(c, 0x16D520, {now});
-        st(c, old_back + 8, ld(c, kDeviceStorage + kDevFence));
-        host::call_guest(c, 0x16D750, {old_back});
-        st(c, kDeviceStorage + kDevRenderTarget, now);
-    }
+    // (The render target stays: the back buffer's object is still the back buffer.)
     frame_pacing(c, d);
     long_frames(d, present_from);
     // QILIN_FPS=1: frames per second, and the game's time step, once a second.
@@ -1118,14 +1142,10 @@ void swap(rt::Context& c) {
         static auto since = std::chrono::steady_clock::now();
         static uint32_t from = d.swaps;
         const auto now = std::chrono::steady_clock::now();
-        static float lo = 1e9f, hi = 0.0f;
-        const float step = std::bit_cast<float>(ld(c, unlocated(0x5096C0)));
-        lo = std::min(lo, step), hi = std::max(hi, step);
         if (now - since >= std::chrono::seconds(1)) {
             const double s = std::chrono::duration<double>(now - since).count();
-            std::fprintf(stderr, "qilin: %.1f frames a second, time step %.4f s (%.5f to %.5f)\n", (d.swaps - from) / s, double(step),
-                         double(lo), double(hi));
-            since = now, from = d.swaps, lo = 1e9f, hi = 0.0f;
+            std::fprintf(stderr, "qilin: %.1f frames a second\n", (d.swaps - from) / s);
+            since = now, from = d.swaps;
         }
     }
     deliver_frame(d);
@@ -2197,6 +2217,233 @@ struct FixedFunction {
     uint64_t key = 0;
 };
 
+// ---------------------------------------------------------------- fixed-function lighting
+// D3D 8's vertex lighting, in eye space, as the fixed-function program does
+// it (fixed_function_program) with its constants (lighting_constants):
+//   colour = E + A × (Ga + Σ atten·spot·La) + D × Σ atten·spot·max(N·L, 0)·Ld
+//   alpha  = D's alpha
+// E, A, D the emissive, ambient and diffuse colour sources (the material's,
+// or the vertex's diffuse or specular colour with D3DRS_COLORVERTEX, where
+// the vertex has one), Ga D3DRS_AMBIENT, the sum over the enabled lights:
+// directional, point and spot, attenuated by 1/(a0 + a1·d + a2·d²) and cut
+// off beyond their range (not directional ones), spot lights by
+// ((ρ − cos φ/2) / (cos θ/2 − cos φ/2))^falloff clamped to [0, 1]. Normals go
+// through the inverse transpose of world × view, normalised with
+// D3DRS_NORMALIZENORMALS; lights through the view. The result is clamped
+// (the translator clamps oD0). Specular lighting (D3DRS_SPECULARENABLE with
+// lighting on), two-sided lighting and vertex blending stop the runtime.
+//
+// The device keeps the material at +0xEF0 (D3DMATERIAL8: diffuse, ambient,
+// specular, emissive, power), the lights in an array of 0x90-byte records at
+// [+0x7A0] (D3DLIGHT8 first), and the enabled ones in eight slots at +0x7A8
+// (pointers to their records), as this build's SetMaterial (0x1671E0),
+// SetLight (0x167D80) and LightEnable (0x168040) keep them.
+constexpr uint32_t kRsSpecularEnable = 103, kRsColorVertex = 105, kRsDiffuseMaterialSource = 111,
+                   kRsAmbientMaterialSource = 112, kRsEmissiveMaterialSource = 113, kRsAmbient = 115, kRsTwoSidedLighting = 141,
+                   kRsNormalizeNormals = 142;
+constexpr uint32_t kDevMaterial = 0xEF0, kDevLightSlots = 0x7A8;
+constexpr uint32_t kLightPoint = 1, kLightSpot = 2, kLightDirectional = 3;
+// The program's constants: c26-c28 the normal matrix's rows, c29 Ga, c30-c32
+// the material's diffuse, ambient and emissive, c34 (0, 1, 0, 0), and from
+// c60 seven a light: position (or the direction to it), the direction to
+// it for a spot, diffuse, ambient, specular, (a0, a1, a2, range),
+// (cos φ/2, 1/(cos θ/2 − cos φ/2), falloff, 0).
+constexpr uint8_t kCNormal = 26, kCAmbient = 29, kCMaterial = 30, kCZeroOne = 34, kCLights = 60, kCPerLight = 7;
+
+struct Lighting {
+    bool on = false, normalize = false;
+    uint8_t diffuse = 0, ambient = 0, emissive = 0;  // sources: 0 the material, 1 the vertex's diffuse (v3), 2 its specular (v4)
+    std::vector<uint32_t> lights;                    // enabled lights' records, in slot order
+    std::vector<uint8_t> types;
+};
+
+Lighting lighting_of(const rt::Context& c, const char* fn, uint32_t fvf) {
+    auto rs = [&](uint32_t i) { return ld(c, kRenderStateTable + 4 * i); };
+    Lighting l;
+    if (!rs(kRsLighting)) return l;
+    l.on = true;
+    if (rs(kRsSpecularEnable)) unmodelled(fn, "specular lighting (D3DRS_SPECULARENABLE with D3DRS_LIGHTING)");
+    if (rs(kRsTwoSidedLighting)) unmodelled(fn, "two-sided lighting (D3DRS_TWOSIDEDLIGHTING)");
+    l.normalize = rs(kRsNormalizeNormals) != 0;
+    const bool colour_vertex = rs(kRsColorVertex) != 0;
+    auto source = [&](uint32_t state) -> uint8_t {
+        const uint32_t v = colour_vertex ? rs(state) : 0;
+        if (v > 2) unmodelled(fn, strf("material source %u (render state %u)", v, state));
+        if (v == 1 && !(fvf & 0x40u)) return 0;  // no diffuse colour in the vertex: the material's
+        if (v == 2 && !(fvf & 0x80u)) return 0;  // no specular colour
+        return uint8_t(v);
+    };
+    l.diffuse = source(kRsDiffuseMaterialSource), l.ambient = source(kRsAmbientMaterialSource), l.emissive = source(kRsEmissiveMaterialSource);
+    for (uint32_t k = 0; k < 8; ++k) {
+        const uint32_t rec = ld(c, kDeviceStorage + kDevLightSlots + 4 * k);
+        if (!rec) continue;
+        const uint32_t type = ld(c, rec);
+        if (type < kLightPoint || type > kLightDirectional) unmodelled(fn, strf("light type %u", type));
+        l.lights.push_back(rec);
+        l.types.push_back(uint8_t(type));
+    }
+    if (!l.lights.empty() && !(fvf & 0x10u)) unmodelled(fn, strf("lights on vertices without normals (FVF %#x)", fvf));
+    return l;
+}
+
+// The constants lighting_of's program reads (see above).
+void lighting_constants(const rt::Context& c, const Lighting& l, float* out) {
+    auto f = [&](uint32_t a) { return std::bit_cast<float>(ld(c, a)); };
+    auto set = [&](uint32_t reg, float x, float y, float z, float w) { out[4 * reg] = x, out[4 * reg + 1] = y, out[4 * reg + 2] = z, out[4 * reg + 3] = w; };
+    auto matrix = [&](uint32_t state, double m[4][4]) {
+        for (int k = 0; k < 16; ++k) m[k / 4][k % 4] = f(kDeviceStorage + kDevTransforms + 64 * state + 4 * uint32_t(k));
+    };
+    double w[4][4], v[4][4], wv[4][4] = {};
+    matrix(kTsWorld, w), matrix(kTsView, v);
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            for (int k = 0; k < 4; ++k) wv[i][j] += w[i][k] * v[k][j];
+    // n_eye[j] = Σ_i n[i]·inv[j][i], inv the inverse of world × view's 3×3 (row vectors).
+    const double det = wv[0][0] * (wv[1][1] * wv[2][2] - wv[1][2] * wv[2][1]) - wv[0][1] * (wv[1][0] * wv[2][2] - wv[1][2] * wv[2][0]) +
+                       wv[0][2] * (wv[1][0] * wv[2][1] - wv[1][1] * wv[2][0]);
+    const double id = det != 0 ? 1.0 / det : 0.0;
+    double inv[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            const int a0 = (j + 1) % 3, a1 = (j + 2) % 3, b0 = (i + 1) % 3, b1 = (i + 2) % 3;
+            inv[i][j] = (wv[a0][b0] * wv[a1][b1] - wv[a0][b1] * wv[a1][b0]) * id;  // the adjugate's cofactor, transposed
+        }
+    for (int j = 0; j < 3; ++j) set(uint32_t(kCNormal + j), float(inv[j][0]), float(inv[j][1]), float(inv[j][2]), 0.0f);
+    const uint32_t ga = ld(c, kRenderStateTable + 4 * kRsAmbient);
+    set(kCAmbient, float((ga >> 16) & 0xFF) / 255.0f, float((ga >> 8) & 0xFF) / 255.0f, float(ga & 0xFF) / 255.0f, 0.0f);
+    const uint32_t mat = kDeviceStorage + kDevMaterial;
+    set(kCMaterial, f(mat), f(mat + 4), f(mat + 8), f(mat + 12));                // diffuse
+    set(kCMaterial + 1, f(mat + 16), f(mat + 20), f(mat + 24), f(mat + 28));     // ambient
+    set(kCMaterial + 2, f(mat + 48), f(mat + 52), f(mat + 56), f(mat + 60));     // emissive
+    set(kCZeroOne, 0.0f, 1.0f, 0.0f, 0.0f);
+    for (size_t i = 0; i < l.lights.size(); ++i) {
+        const uint32_t rec = l.lights[i], b = uint32_t(kCLights + kCPerLight * i);
+        // D3DLIGHT8: Type, Diffuse, Specular, Ambient, Position, Direction,
+        // Range, Falloff, Attenuation0-2, Theta, Phi.
+        const double px = f(rec + 0x34), py = f(rec + 0x38), pz = f(rec + 0x3C);
+        const double dx = f(rec + 0x40), dy = f(rec + 0x44), dz = f(rec + 0x48);
+        double pe[3], de[3];
+        for (int j = 0; j < 3; ++j) {
+            pe[j] = px * v[0][j] + py * v[1][j] + pz * v[2][j] + v[3][j];
+            de[j] = dx * v[0][j] + dy * v[1][j] + dz * v[2][j];
+        }
+        const double dl = std::sqrt(de[0] * de[0] + de[1] * de[1] + de[2] * de[2]), dn = dl > 0 ? -1.0 / dl : 0.0;
+        const float to_light[3] = {float(de[0] * dn), float(de[1] * dn), float(de[2] * dn)};
+        if (l.types[i] == kLightDirectional) set(b, to_light[0], to_light[1], to_light[2], 0.0f);
+        else set(b, float(pe[0]), float(pe[1]), float(pe[2]), 1.0f);
+        set(b + 1, to_light[0], to_light[1], to_light[2], 0.0f);
+        set(b + 2, f(rec + 4), f(rec + 8), f(rec + 12), f(rec + 16));
+        set(b + 3, f(rec + 36), f(rec + 40), f(rec + 44), f(rec + 48));
+        set(b + 4, f(rec + 20), f(rec + 24), f(rec + 28), f(rec + 32));
+        set(b + 5, f(rec + 0x54), f(rec + 0x58), f(rec + 0x5C), f(rec + 0x4C));
+        const double cos_inner = std::cos(0.5 * f(rec + 0x60)), cos_outer = std::cos(0.5 * f(rec + 0x64));
+        const double span = cos_inner - cos_outer;
+        set(b + 6, float(cos_outer), float(span > 1e-6 ? 1.0 / span : 1e6), f(rec + 0x50), 0.0f);
+    }
+}
+
+// Appends lighting_of's lighting to a fixed-function program: oD0 from the
+// lights (temporaries r0 and r5-r11, r1 for the ILU).
+void lighting_program(gfx::vsh::Program& p, const Lighting& l) {
+    using namespace gfx::vsh;
+    struct Arg {
+        Operand o;
+        int c = -1;  // a constant's register, else -1
+    };
+    auto sw = [](Operand o, std::string_view swz) {  // "x", "xyz", "w"...: the last letter repeats
+        const auto lane = [&](size_t k) {
+            const char ch = swz[std::min(k, swz.size() - 1)];
+            return uint8_t(ch == 'x' ? 0 : ch == 'y' ? 1 : ch == 'z' ? 2 : 3);
+        };
+        o.swizzle[0] = lane(0), o.swizzle[1] = lane(1), o.swizzle[2] = lane(2), o.swizzle[3] = lane(3);
+        return o;
+    };
+    auto r = [&](uint8_t i, const char* swz = "xyzw") { Operand o; o.kind = gfx::vsh::Src::Temp; o.index = i; return Arg{sw(o, swz)}; };
+    auto v = [&](uint8_t i, const char* swz = "xyzw") { Operand o; o.kind = gfx::vsh::Src::Input; o.index = i; return Arg{sw(o, swz)}; };
+    auto k = [&](int reg, const char* swz = "xyzw") { Operand o; o.kind = gfx::vsh::Src::Const; return Arg{sw(o, swz), reg}; };
+    auto neg = [](Arg a) { a.o.negate = !a.o.negate; return a; };
+    auto mask = [](const char* m) {
+        uint8_t b = 0;
+        for (const char* q = m; *q; ++q) b |= uint8_t(*q == 'x' ? 8 : *q == 'y' ? 4 : *q == 'z' ? 2 : 1);
+        return b;
+    };
+    // One MAC operation into a temporary (or, with out >= 0, an output).
+    auto mac = [&](Mac op, uint8_t dst, const char* m, Arg a, Arg b = {}, Arg cc = {}, int out = -1) {
+        Instruction in;
+        in.mac = op, in.a = a.o, in.b = b.o, in.c = cc.o;
+        const int reg = a.c >= 0 ? a.c : b.c >= 0 ? b.c : cc.c;
+        if ((a.c >= 0 && b.c >= 0 && a.c != b.c) || (cc.c >= 0 && reg != cc.c)) {  // one constant an instruction: a bug here
+            std::fprintf(stderr, "qilin: the lighting program reads two constants in one instruction\n");
+            std::abort();
+        }
+        if (reg >= 0) in.constant = uint8_t(reg);
+        if (out >= 0) in.out_address = uint8_t(out), in.out_mask = mask(m);
+        else in.temp = dst, in.mac_temp_mask = mask(m);
+        p.code.push_back(in);
+    };
+    // One ILU operation (alone: it writes the instruction's temporary, r1 here).
+    auto ilu = [&](Ilu op, const char* m, Arg a) {
+        Instruction in;
+        in.ilu = op, in.c = a.o, in.temp = 1, in.ilu_temp_mask = mask(m);
+        if (a.c >= 0) in.constant = uint8_t(a.c);
+        p.code.push_back(in);
+    };
+    auto source = [&](uint8_t which, int material) { return which == 0 ? k(material) : v(which == 1 ? 3 : 4); };
+    const Arg D = source(l.diffuse, kCMaterial), A = source(l.ambient, kCMaterial + 1), E = source(l.emissive, kCMaterial + 2);
+    const bool positional = std::ranges::any_of(l.types, [](uint8_t t) { return t != kLightDirectional; });
+    if (positional)
+        for (uint8_t row = 0; row < 3; ++row) mac(Mac::Dp4, 5, row == 0 ? "x" : row == 1 ? "y" : "z", v(0), k(4 + row));  // r5: eye position
+    if (!l.lights.empty()) {
+        for (uint8_t row = 0; row < 3; ++row) mac(Mac::Dp3, 6, row == 0 ? "x" : row == 1 ? "y" : "z", v(2), k(kCNormal + row));  // r6: eye normal
+        if (l.normalize) {
+            mac(Mac::Dp3, 7, "x", r(6), r(6));
+            ilu(Ilu::Rsq, "x", r(7, "x"));
+            mac(Mac::Mul, 6, "xyz", r(6), r(1, "x"));
+        }
+    }
+    mac(Mac::Mov, 7, "xyz", k(kCAmbient));      // r7: the ambient sum, from Ga
+    mac(Mac::Mov, 8, "xyz", k(kCZeroOne, "x"));  // r8: the diffuse sum
+    for (size_t i = 0; i < l.lights.size(); ++i) {
+        const int b = kCLights + kCPerLight * int(i);
+        if (l.types[i] == kLightDirectional) {
+            mac(Mac::Dp3, 10, "x", r(6), k(b));                   // N·L
+            mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
+            mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));  // + Ld·max(N·L, 0)
+            mac(Mac::Add, 7, "xyz", r(7), k(b + 3));              // + La
+            continue;
+        }
+        mac(Mac::Add, 9, "xyz", k(b), neg(r(5)));            // r9: to the light
+        mac(Mac::Dp3, 10, "yz", r(9), r(9));                 // d²
+        ilu(Ilu::Rsq, "yw", r(10, "y"));                     // 1/d
+        mac(Mac::Dst, 10, "xyzw", r(10), r(1));              // r10 = (1, d, d², 1/d)
+        mac(Mac::Mul, 9, "xyz", r(9), r(1, "w"));            // L
+        mac(Mac::Dp3, 11, "x", r(10), k(b + 5));             // a0 + a1·d + a2·d²
+        ilu(Ilu::Rcp, "x", r(11, "x"));
+        mac(Mac::Sge, 11, "y", k(b + 5, "w"), r(10, "y"));   // within the range
+        mac(Mac::Mul, 11, "x", r(1, "x"), r(11, "y"));       // r11.x: the attenuation
+        if (l.types[i] == kLightSpot) {
+            mac(Mac::Dp3, 10, "y", r(9), k(b + 1));          // ρ
+            mac(Mac::Add, 10, "y", r(10, "y"), neg(k(b + 6, "x")));
+            mac(Mac::Mul, 10, "y", r(10, "y"), k(b + 6, "y"));
+            mac(Mac::Max, 10, "y", r(10, "y"), k(kCZeroOne, "x"));
+            mac(Mac::Min, 10, "y", r(10, "y"), k(kCZeroOne, "y"));
+            mac(Mac::Mov, 10, "x", k(kCZeroOne, "y"));       // lit's x: 1
+            mac(Mac::Mov, 10, "w", k(b + 6, "z"));           // its power: the falloff
+            ilu(Ilu::Lit, "z", r(10));                       // r1.z = t^falloff
+            mac(Mac::Mul, 11, "x", r(11, "x"), r(1, "z"));
+        }
+        mac(Mac::Dp3, 10, "x", r(6), r(9));                  // N·L
+        mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
+        mac(Mac::Mul, 10, "x", r(10, "x"), r(11, "x"));
+        mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));
+        mac(Mac::Mad, 7, "xyz", k(b + 3), r(11, "x"), r(7));
+    }
+    mac(Mac::Mul, 0, "xyz", A, r(7));
+    if (!l.lights.empty()) mac(Mac::Mad, 0, "xyz", D, r(8), r(0));
+    mac(Mac::Add, 0, "xyz", r(0), E, {}, kD0);
+    mac(Mac::Mov, 0, "w", Arg{sw(D.o, "w"), D.c}, {}, {}, kD0);
+}
+
 FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points) {
     using namespace gfx::vsh;
     const uint32_t fvf = ld(c, kDeviceStorage + kDevVertexShader + 4);
@@ -2208,7 +2455,7 @@ FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points
     // Normals (D3DFVF_NORMAL) are read only by lighting and texture
     // coordinate generation, which stop below until they're modelled.
     if (fvf & ~0xFFFF0FF2u) unmodelled(fn, strf("FVF %#x", fvf));
-    if (rs(kRsLighting)) unmodelled(fn, "fixed-function lighting (D3DRS_LIGHTING)");
+    const Lighting lit = lighting_of(c, fn, fvf);
     if (rs(kRsVertexBlend)) unmodelled(fn, "vertex blending (D3DRS_VERTEXBLEND)");
     for (uint32_t n = 0; n < texcount; ++n) {
         if (ts(n, kTsTexCoordIndex) != n) unmodelled(fn, strf("stage %u's texture coordinates from set %#x", n, ts(n, kTsTexCoordIndex)));
@@ -2226,8 +2473,13 @@ FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points
 
     FixedFunction f;
     const bool point_scale = points && rs(kRsPointScaleEnable);
-    f.key = 0xF1F0000000000000ull | uint64_t(fvf) | uint64_t(fog_gen) << 32 | uint64_t(points) << 36 | uint64_t(point_scale) << 37 |
-            transforms << 38;
+    {  // the key: everything the program depends on
+        std::vector<uint32_t> k = {fvf, fog_gen, uint32_t(points) | uint32_t(point_scale) << 1, uint32_t(transforms), uint32_t(transforms >> 32),
+                                   uint32_t(lit.on) | uint32_t(lit.normalize) << 1 | uint32_t(lit.diffuse) << 2 | uint32_t(lit.ambient) << 4 |
+                                       uint32_t(lit.emissive) << 6};
+        for (uint8_t t : lit.types) k.push_back(t);
+        f.key = (hash_bytes(reinterpret_cast<const uint8_t*>(k.data()), k.size() * 4) & 0x0FFFFFFFFFFFFFFFull) | 0xF000000000000000ull;
+    }
     auto input = [](uint8_t i) { Operand o; o.kind = Src::Input; o.index = i; return o; };
     auto temp = [](uint8_t i) { Operand o; o.kind = Src::Temp; o.index = i; return o; };
     auto konst = [] { Operand o; o.kind = Src::Const; return o; };
@@ -2260,7 +2512,11 @@ FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points
         out(in, address, 0xF);
         f.program.code.push_back(in);
     };
-    mov(kD0, 3);  // the vertices' colours, or the registers' (absent_colour_registers)
+    if (lit.on) {
+        lighting_program(f.program, lit);
+    } else {
+        mov(kD0, 3);  // the vertices' colours, or the registers' (absent_colour_registers)
+    }
     mov(kD1, 4);
     if (fog_gen == 0) {  // mov oFog.x, v4.w
         Instruction in;
@@ -2474,7 +2730,7 @@ FogUnit fog_unit(const rt::Context& c) {
 // texture factor in each stage's C0; the final combiner passes r0 through.
 // Operations and arguments beyond these stop the runtime until they're
 // modelled. (The original does this conversion in its state flush.)
-constexpr uint32_t kRsSpecularEnable = 103, kRsTextureFactor = 148;
+constexpr uint32_t kRsTextureFactor = 148;
 constexpr uint32_t kTsColorOp = 12, kTsAlphaOp = 16, kTsResultArg = 20;
 constexpr uint32_t kOne = 0x20;  // the zero register, inverted: 1
 
@@ -2724,7 +2980,11 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
     } else if (fixed_function) {
         composite_constants(c, vsu.data());  // c0-c3, and the model view in c4-c7 (the program's own constants aren't used)
     }
-    if (fixed_function) texture_transform_constants(c, ld(c, dev + kDevVertexShader + 4), &vsu[10 * 4]);
+    if (fixed_function) {
+        texture_transform_constants(c, ld(c, dev + kDevVertexShader + 4), &vsu[10 * 4]);
+        const Lighting lit = lighting_of(c, fn, ld(c, dev + kDevVertexShader + 4));
+        if (lit.on) lighting_constants(c, lit, vsu.data());
+    }
     if (prim == 1) {
         // The point size's constants (fixed_function_program): c8 the
         // attenuation (C, B, 0, A), c9 (viewport height × size, or the size,
@@ -3921,6 +4181,7 @@ D3dConfig& config_storage() {
 }
 
 }  // namespace
+
 
 const D3dConfig& d3d_config() { return config_storage(); }
 

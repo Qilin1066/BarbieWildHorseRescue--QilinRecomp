@@ -1,6 +1,7 @@
 #include "host.hpp"
 #include "strf.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <initializer_list>
 #include <algorithm>
@@ -276,6 +277,12 @@ const XdkSymbol* xdk_symbol(std::string_view name) {
         if (s.address != 0 && name == s.name) return &s;
     return nullptr;
 }
+
+namespace {
+std::atomic<uint64_t> g_frames_shown{0};
+}
+uint64_t frames_shown() { return g_frames_shown.load(std::memory_order_relaxed); }
+void frame_shown() { g_frames_shown.fetch_add(1, std::memory_order_relaxed); }
 
 int xdk_ret_bytes(std::string_view name) {
     struct Pops {

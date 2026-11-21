@@ -13,6 +13,7 @@
 // XInitDevices, then XGetDevices and XGetDeviceChanges per type, opens and
 // closes ports as they change, reads every open port with XInputGetState,
 // and sends rumble with XInputSetState.
+#include <algorithm>
 #include <array>
 #include <string>
 
@@ -51,7 +52,7 @@ void gamepads_only(const char* fn, uint32_t type) {
     if (type != g_gamepad) unmodelled(fn, strf("device type %08X (only gamepads, %08X, are)", type, g_gamepad));
 }
 
-uint32_t present() { return g_input ? g_input->connected_ports() : 0; }
+uint32_t present() { return (g_input ? g_input->connected_ports() : 0) | (scripted_ports()); }
 
 // The port a handle names, or -1.
 int port_of(uint32_t handle) {
@@ -125,7 +126,7 @@ void x_input_close(rt::Context& c) {
 void x_input_get_state(rt::Context& c) {
     const int port = port_of(arg(c, 0));
     if (port < 0) unmodelled("XInputGetState", strf("handle %08X, which isn't open", arg(c, 0)));
-    const platform::PadState s = g_input ? g_input->state(uint32_t(port)) : platform::PadState{};
+    const platform::PadState s = with_script(uint32_t(port), g_input ? g_input->state(uint32_t(port)) : platform::PadState{});
     if (!s.connected) return ret(c, kErrorDeviceNotConnected, 8);
     Port& p = g_ports[size_t(port)];
     if (s != p.last) {
