@@ -57,6 +57,9 @@ Menu::Menu(platform::Window& window, gfx::Renderer& renderer, platform::Settings
     ImGui::GetStyle().ScaleAllSizes(scale);
     ImGui::GetStyle().FontScaleMain = scale;
     if (!ImGui_ImplSDL3_InitForVulkan(window_.sdl())) return;
+    // Every controller works the menu, not only the first one SDL lists
+    // (which can be a virtual pad, or a wheel's base).
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll);
     sdl_backend_ = true;
     g_format = VkFormat(o.format);
     ImGui_ImplVulkan_InitInfo info{};
