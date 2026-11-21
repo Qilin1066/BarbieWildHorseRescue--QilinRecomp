@@ -68,17 +68,17 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - After editing `CMakeLists.txt`, run `cmake -S . -B build` again before building one target by name: `cmake --build --target new_target` on a stale tree says there is no such rule.
 - In the v0.2.0 session a request for access to the PC's Downloads folder was refused by the session's own permission rules, not by the owner: the owner has to connect the game's folder from the desktop app ("Add folder").
 
-## Status (v0.7.0)
+## Status (v0.8.0)
 
 - The tools build and their tests pass under GCC 14 and Clang (zig) locally and in CI. The whole game lifts, compiles and starts (v0.5.0); nothing of it has been checked against the original x86 yet.
-- Since v0.7.0 (unreleased): Direct3D natively, with the window and settings menu; the game shows its legal notice and logos and plays the intro movie (XMV lifted whole, through the video overlay), with sound, then stops at `SetPalette` as the front end starts. To run it locally: the disc's `Packages/` and `Video/` beside `default.xbe` (staged from the owner's PC, never committed), `qilin_run --headless --dump-frames DIR <folder>`.
+- v0.8.0: Direct3D natively, with the window and settings menu; the game shows its legal notice and logos, plays the intro movie (XMV lifted whole, through the video overlay) with sound, and reaches its title screen ("Press START to begin"), where a headless run stays. To run it locally: the disc's `Packages/` and `Video/` beside `default.xbe` (staged from the owner's PC, never committed), `qilin_run --headless --dump-frames DIR <folder>`.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
 - v0.2.0: the renderer, audio engine, platform layer and settings menu are in, with their tests; `qilin_menu_preview` shows the menu over a test card (seen working under Xvfb on Mesa's software driver). Nothing drives them from a game yet.
 - Unchecked: the lifted code against the original (no differential test yet); the decoder against LLVM; the disc reader on a real image; the PowerShell script (never run).
 
 ## Next steps, in order
 
-1. The front end: the next stop is `D3DDevice_SetPalette` (`0x168350`, from `0x0F4D14`), after the intro movie. Then the rest of Direct3D the game calls: **read `docs/graphics.md` first** (palettes, lighting in the fixed-function program, `SetShaderConstantMode`, `PersistDisplay`). Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
+1. Past the title screen: press START (a window run under Xvfb with a key, or a scripted input for headless runs, as the sister project's), then the front end's menus and the first ride. **Read `docs/graphics.md` first**: lighting in the fixed-function program is the known gap (lit draws stop), and `PersistDisplay`, `KickPushBuffer` are still to come. Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
 2. DirectSound's 3D: lift the library's own 3D calculator as GBTGhoulies does (`kLiftedDsound` in its `recomp/src/main.cpp`), found here by name, and feed its results to the voices; until then 3D sounds are unpositioned. Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. `XMountMUA`/`XUnmountMU`.
 4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.

@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs XAPI's and the C runtime's start-up, the game's `main` and the engine's own start-up (heap, background loader, input, sound) until its display start-up makes its first Direct3D call, where the runtime stops and names it (v0.7.0). The controller library and DirectSound are replaced natively (3D sound positioning is not applied yet); Direct3D and the XMV player are the work ahead (`docs/code-analysis.md` lists the functions the game calls in them). The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
+**It doesn't play the game yet, but it reaches the title screen.** Every function the game needs lifts to C++ and compiles, and `qilin_run` runs the result over a native kernel, Direct3D (over Vulkan), DirectSound and the controller library: from power-on the game shows its legal notice and logos, plays its intro movie with sound (Microsoft's XMV decoder, lifted whole), and stops at "Press START to begin", animated (v0.8.0). Past it is untried. The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
@@ -19,12 +19,13 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | ✅ all 6,621 functions lift (the game and its engine whole, the libraries by reach); the output compiles |
 | What the analysis has established about the game (`recomp/src/game.hpp`) | ✅ the build's identity, the regions of `.text`, alignment, the C runtime's conventions, the native functions (`docs/code-analysis.md`) |
 | Differential test of every lifted function against the original x86 | to do, with the game |
-| Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
+| Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; driven by the game since v0.8.0 |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
 | Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it and runs into its engine (v0.6.0); three test programs go from XBE through the lifter to native programs and run in CI |
-| The controller library | ✅ natively, found by name in this XDK build (no window yet, so no controller is plugged in) |
-| DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; 3D positioning recorded but not applied; not yet heard |
-| Direct3D, the XMV player | to do: 48 and 6 functions the game calls |
+| The controller library | ✅ natively, found by name in this XDK build, through the window |
+| DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; the movie's sound plays; 3D positioning recorded but not applied |
+| Direct3D | 🔨 natively over the renderer (v0.8.0): everything up to the title screen; fixed-function lighting still to do |
+| The XMV movie player | ✅ lifted whole, through the video overlay (v0.8.0) |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 
 ## Versions and changes

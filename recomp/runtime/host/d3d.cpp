@@ -747,6 +747,34 @@ void vertex_buffer_lock2(rt::Context& c) {
     ret(c, ld(c, arg(c, 0) + 4) | rt::kRamCachedAlias, 8);
 }
 
+// BYTE* D3DPalette_Lock2(D3DPalette*, DWORD Flags): the entries' address in
+// the contiguous-memory window, as the original (0x16D810) returns it; it
+// waits for the GPU first unless the flags say not to (0xA0), which the
+// runtime has no need of: draws read the palette as they're recorded.
+void palette_lock2(rt::Context& c) {
+    if (g_device) ++g_device->memory_epoch;
+    ret(c, ld(c, arg(c, 0) + 4) | rt::kRamCachedAlias, 8);
+}
+
+// VOID D3DDevice_SetPalette(DWORD Stage, D3DPalette*): as the original
+// (0x168350): the stage's palette at the device's +0xF88, the old one
+// given the device's fence as its last use and its internal reference
+// dropped (destroyed by D3D_DestroyResource, lifted, when nothing holds
+// it), the new one given one. The GPU's palette method is the draws'.
+void set_palette(rt::Context& c) {
+    const uint32_t stage = arg(c, 0), pal = arg(c, 1), slot = kDeviceStorage + 0xF88 + 4 * stage;
+    if (stage > 3) unmodelled("D3DDevice_SetPalette", strf("stage %u", stage));
+    if (const uint32_t old = ld(c, slot)) {
+        st(c, old + 8, ld(c, kDeviceStorage + kDevFence));
+        const uint32_t common = ld(c, old) - kIntRef1;
+        st(c, old, common);
+        if (!(common & 0x78FFFFu)) host::call_guest(c, 0x16D440, {old});
+    }
+    st(c, slot, pal);
+    if (pal) st(c, pal, ld(c, pal) + kIntRef1);
+    ret(c, c.eax, 8);
+}
+
 // ULONG D3DResource_Release(D3DResource*): as the original. A surface's
 // parent texture is released with it, and a resource the device still holds
 // (internal references) stays. One with neither is destroyed by D3D's own
@@ -1771,7 +1799,7 @@ enum Rs : uint32_t {
 const Device::CachedTexture* target_texture(rt::Context& c, Device& d, uint32_t tex);
 const Device::CachedTexture* depth_texture(rt::Context& c, Device& d, uint32_t tex);
 // A palettized (P8) texture reads the stage's palette, which the device
-// keeps at +0xF88 (SetPalette is inline: the game stores it there): 256
+// keeps at +0xF88 (set_palette; inline in the sister's build): 256
 // A8R8G8B8 entries at most (D3DPalette's size code: 256 >> code), part of
 // what the cached texture is made from.
 const Device::CachedTexture* stage_texture(rt::Context& c, Device& d, const char* fn, uint32_t tex, uint32_t stage) {
@@ -3447,6 +3475,28 @@ void load_vs_constants(rt::Context& c, const char* fn, uint32_t reg, uint32_t da
         if (shadow) st(c, kVsConstantShadow + 16 * reg + 4 * k, v);
     }
 }
+// VOID D3DDevice_SetShaderConstantMode(D3DSHADERCONSTANTMODE): as the
+// original (0x16AE60): D3DSCM_NORESERVEDCONSTANTS (0x10) as the device's
+// flag 0x200, the mode (96 constants 0, 192 constants 1, 192 and the fixed
+// pipeline 2) at +0x1918. Back to 96 constants it reloads the GPU's
+// constants 60-62 from D3D's table (0x175A80) and the fixed pipeline's
+// matrices, which the renderer's fixed-function path computes itself, and
+// marks the shader state dirty (0x1600).
+void set_shader_constant_mode(rt::Context& c) {
+    const char* fn = "D3DDevice_SetShaderConstantMode";
+    Device& d = device(fn);
+    const uint32_t mode = arg(c, 0), m = mode & ~0x10u;
+    if (m > 2) unmodelled(fn, strf("mode %#x", mode));
+    const uint32_t flags = ld(c, kDeviceStorage + 8);
+    st(c, kDeviceStorage + 8, mode & 0x10u ? flags | 0x200u : flags & ~0x200u);
+    st(c, kDeviceStorage + 0x1918, m);
+    if (m == 0) {
+        st(c, kDirtyFlags, ld(c, kDirtyFlags) | 0x1600u);
+        for (uint32_t k = 0; k < 12; ++k) d.vs_constants[60 + k / 4][k % 4] = ld(c, 0x175A80 + 4 * k);
+    }
+    ret(c, c.eax, 4);
+}
+
 // Fastcall: ecx the register, edx the data.
 void set_vs_constant1(rt::Context& c) {
     load_vs_constants(c, "D3DDevice_SetVertexShaderConstant1", c.ecx, c.edx, 4, true);
@@ -3802,6 +3852,9 @@ constexpr D3dFn kD3d[] = {
     {"Direct3D_CreateDevice", 24, create_device},
     {"D3DDevice_GetBackBuffer2", 4, get_back_buffer2},
     {"D3DDevice_GetDisplayMode", 4, get_display_mode},
+    {"D3DDevice_SetPalette", 8, set_palette},
+    {"D3DDevice_SetShaderConstantMode", 4, set_shader_constant_mode},
+    {"D3DPalette_Lock2", 8, palette_lock2},
     {"D3DDevice_EnableOverlay", 4, enable_overlay},
     {"D3DDevice_GetDisplayFieldStatus", 4, get_display_field_status},
     {"D3DDevice_GetOverlayUpdateStatus", 0, get_overlay_update_status},
@@ -3809,6 +3862,7 @@ constexpr D3dFn kD3d[] = {
     {"D3DDevice_GetDepthStencilSurface2", 0, get_depth_stencil_surface2},
     {"D3DDevice_GetRenderTarget2", 0, get_render_target2},
     {"D3D_BlockOnResource", 4, block_on_resource},
+    {"D3DResource_BlockUntilNotBusy", 4, block_on_resource},  // a jump to D3D_BlockOnResource in this build (0x16D740)
     {"D3DVertexBuffer_Lock2", 8, vertex_buffer_lock2},
     {"D3DResource_Release", 4, resource_release},
     {"D3DDevice_Release", 0, device_release},
