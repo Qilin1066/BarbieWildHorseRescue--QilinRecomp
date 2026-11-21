@@ -460,10 +460,22 @@ void raw_transfer(rt::Context& c, Handle& h, bool write, const char* fn) {
 void transfer(rt::Context& c, bool write, const char* fn) {
     Handle* h = find(arg(c, 0));
     const uint32_t event = arg(c, 1), apc = arg(c, 2), iosb = arg(c, 4), buf = arg(c, 5), len = arg(c, 6), poff = arg(c, 7);
-    if (event) unmodelled(fn, "an event handle");
-    if (apc) unmodelled(fn, "an APC routine");
+    // The transfer completes before the call returns; the event (reset as it
+    // starts, set when it ends) and the completion APC (ApcRoutine(ApcContext,
+    // IoStatusBlock, 0), run at the thread's next alertable wait) follow it.
+    uint32_t event_object = 0;
+    if (event) {
+        event_object = sched::handle_object(event);
+        if (!event_object) {
+            ret(c, kInvalidHandle, 32);
+            return;
+        }
+        rt::st32(mem(c), event_object + 4, 0, 0);  // KEVENT SignalState
+    }
     if (h && h->kind == Handle::Kind::Device) {
+        if (apc) unmodelled(fn, "an APC routine on a raw device");
         raw_transfer(c, *h, write, fn);
+        if (event_object) sched::set_event(event_object);
         return;
     }
     if (!h || h->kind != Handle::Kind::File) {
@@ -506,6 +518,8 @@ void transfer(rt::Context& c, bool write, const char* fn) {
     }
     h->position = off + done;
     io_status(c, iosb, status, done);
+    if (event_object) sched::set_event(event_object);
+    if (apc) sched::queue_apc_self(apc, arg(c, 3), iosb, 0);
     ret(c, status, 32);
 }
 void nt_read_file(rt::Context& c) { transfer(c, false, "NtReadFile"); }

@@ -227,6 +227,23 @@ void mm_free_contiguous_memory(rt::Context& c) {
 // across a reboot into another title. Nothing to do.
 void mm_persist_contiguous_memory(rt::Context& c) { ret(c, c.eax, 12); }
 
+// VOID MmSetAddressProtect(PVOID BaseAddress, ULONG NumberOfBytes, ULONG
+// NewProtect) (182): a range's page protection and caching (XAPI's
+// XPhysicalProtect, for write-combined contiguous memory the GPU reads). The
+// host's memory has no caching types and the runtime doesn't fault on
+// access, so read-write with any caching (PAGE_NOCACHE 0x200,
+// PAGE_WRITECOMBINE 0x400) changes nothing; anything that would make the
+// range fault stops, since the runtime wouldn't.
+void mm_set_address_protect(rt::Context& c) {
+    const uint32_t protect = arg(c, 2), access = protect & 0xFF;
+    if ((access != 0x04 && access != 0x40) || (protect & ~0x6FFu)) {
+        static std::string why;
+        why = strf("MmSetAddressProtect: protection %#x of %08X (%u bytes)", protect, arg(c, 0), arg(c, 1));
+        rt::trap(kernel_addr(182), why.c_str());
+    }
+    ret(c, c.eax, 12);
+}
+
 // NTSTATUS MmQueryStatistics(PMM_STATISTICS) (181): Length (must be 36),
 // TotalPhysicalPages, AvailablePages, VirtualMemoryBytesCommitted,
 // VirtualMemoryBytesReserved, CachePagesCommitted, PoolPagesCommitted,
@@ -369,15 +386,28 @@ constexpr StatusMap kDosErrors[] = {
     {0xC000007F, 112}, {0xC00000A0, 487}, {0xC00000A2, 19}, {0xC00000BA, 5},   {0xC0000101, 145}, {0xC0000103, 267},
     {0xC0000120, 995},
 };
-void rtl_nt_status_to_dos_error(rt::Context& c) {
-    const uint32_t status = arg(c, 0);
+uint32_t dos_error(uint32_t status) {
     const auto it = std::ranges::find(kDosErrors, status, &StatusMap::status);
     if (it == std::end(kDosErrors)) {
         static std::string why;
         why = strf("RtlNtStatusToDosError: status %08X isn't in the table yet", status);
         rt::trap(kernel_addr(301), why.c_str());
     }
-    ret(c, it->error, 4);
+    return it->error;
+}
+void rtl_nt_status_to_dos_error(rt::Context& c) { ret(c, dos_error(arg(c, 0)), 4); }
+
+// VOID NtUserIoApcDispatcher(PVOID ApcContext, PIO_STATUS_BLOCK, ULONG Reserved)
+// (232): the APC routine XAPI's ReadFileEx and WriteFileEx give the kernel.
+// It calls the caller's completion routine (the APC context) with the Win32
+// error (0 for success), the bytes transferred and the OVERLAPPED, whose
+// first two fields are the I/O status block.
+void nt_user_io_apc_dispatcher(rt::Context& c) {
+    const uint32_t routine = arg(c, 0), iosb = arg(c, 1);
+    const uint32_t status = ld(c, iosb), information = ld(c, iosb + 4);
+    const uint32_t error = int32_t(status) >= 0 ? 0 : dos_error(status);
+    sched::call_guest(c, routine, {error, information, iosb});
+    ret(c, 0, 12);
 }
 
 // ---------------------------------------------------------------- timers
@@ -666,6 +696,8 @@ constexpr KernelFn kKernel[] = {
     {"KeInitializeTimerEx", 8, ke_initialize_timer_ex},
     {"ExQueryNonVolatileSetting", 20, ex_query_non_volatile_setting},
     {"RtlNtStatusToDosError", 4, rtl_nt_status_to_dos_error},
+    {"MmSetAddressProtect", 12, mm_set_address_protect},
+    {"NtUserIoApcDispatcher", 12, nt_user_io_apc_dispatcher},
     {"KeSetTimer", 16, ke_set_timer},
     {"KeSetTimerEx", 20, ke_set_timer_ex},
     {"KeCancelTimer", 4, ke_cancel_timer},

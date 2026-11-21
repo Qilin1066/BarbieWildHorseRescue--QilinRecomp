@@ -56,9 +56,60 @@ inline const std::vector<uint32_t> kLiftedLibraryFunctions = {
     0x174900,  // mov eax, 1; ret 4: the library's object creation (the engine keeps the 1 as its "Direct3D object")
     0x174910,  // D3D_GetDeviceCaps: checks its arguments, copies the capabilities table
     0x1670A0,  // D3DDevice_GetDeviceCaps: copies the capabilities table (0x24CFE0)
+    // Direct3D internals the native Direct3D (runtime/host/d3d.cpp) runs as
+    // the library wrote them: memory only, no GPU registers or commands.
+    0x16C5D0,  // the device's default state: identity transforms, render and texture-stage state defaults
+    0x16D440,  // D3D_DestroyResource
+    0x16D520,  // a surface's internal reference (and its texture's)
+    0x16D750,  // dropping one (freeing the resource at none)
+    0x16DB50,  // a depth buffer's largest depth value, into the device (+0x944)
+    0x167370,  // a depth buffer's format bits (+0x948)
+    0x16DA30,  // the render target's anti-aliasing mode (+0x19FC)
+    0x169BA0,  // D3D_CommonSetMultiSampleModeAndScale: the device's multisample scale and viewport
+    0x16A460,  // the fixed-function vertex shader object (0x17A3B8) for an FVF
+    0x16A860,  // a vertex shader declaration's constant loads (size, or written out)
+    0x16A6C0,  // a vertex shader declaration into the shader object's attribute slots
+    0x16A650,  // a vertex program into the shader object's push-buffer form
+    0x16A5A0,  // LoadVertexShader's shadow copies
+    0x16AFC0,  // the fixed-function viewport program's GPU methods (into the push-buffer sink)
+    0x16D840,  // float to int, truncating (cvttss2si)
+    0x16D3F0,  // a resource's private data (SetPrivateData) dropped
+    // Direct3D's resource code, pure computation over XAPI's allocator
+    // (XMemAlloc 0xEAF48, XMemFree 0xEAFE8): lifted, the headers, sizes,
+    // pitches and swizzled layouts are exactly the original's. What it calls
+    // that touches the GPU or the command buffer stays native.
+    0x174940,  // D3DDevice_CreateTexture2
+    0x16E0A0,  // the pixel-container header builder
+    0x16D8D0,  // its helper
+    0x1749F0,  // D3DTexture_GetLevelDesc (a jump to Get2DSurfaceDesc)
+    0x16DD10,  // Get2DSurfaceDesc
+    0x16DBC0,  // a pixel container's dimensions
+    0x174A00,  // D3DTexture_GetSurfaceLevel2
+    0x171A00,  // a texture's surface-level header
+    0x16DDD0,  // a level's size, pitch and offset
+    0x174A50,  // D3DTexture_LockRect
+    0x171AB0,  // D3DSurface_LockRect
+    0x16E000,  // Lock2DSurface
+    0x171A90,  // D3DSurface_GetDesc
+    0x16D5F0,  // D3DResource_GetType
+    0x16D560,  // D3DResource_AddRef
+    0x16ACD0,  // D3DDevice_SetStreamSource: the stream table (0x17A1E0), references and dirty bits; no GPU commands
+    // The fixed-function material and lights: kept in the device as the
+    // library keeps them, no GPU commands. (Drawing with D3DRS_LIGHTING on is
+    // the native Direct3D's, which stops there until it is written.)
+    0x1671E0,  // D3DDevice_SetMaterial
+    0x167D80,  // D3DDevice_SetLight
+    0x168040,  // D3DDevice_LightEnable
+    0x16B380, 0x16B450, 0x16B4B0, 0x16B4E0,  // a light's derived values
+    0x16D850, 0x16D860, 0x16D8C0,            // cosine, exponential and their like on the x87
 };
 // Entry points the runtime calls itself.
-inline const std::vector<uint32_t> kStartupRoots = {};
+inline const std::vector<uint32_t> kStartupRoots = {
+    // Direct3D internals the native Direct3D calls (see kLiftedLibraryFunctions).
+    0x16C5D0, 0x16D440, 0x16D520, 0x16D750, 0x16DB50, 0x167370, 0x16DA30, 0x169BA0,
+    0x16A460, 0x16A860, 0x16A6C0, 0x16A650, 0x16A5A0,
+    0x16AFC0, 0x16D840, 0x16D3F0, 0x16D560,
+};
 // Functions inside lifted regions that belong to a replaced library and that
 // only it calls: not lifted, and `qilin lift` fails if lifted code can reach one.
 inline const std::vector<Replaced> kReplaced = {};

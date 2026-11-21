@@ -257,6 +257,9 @@ struct XdkSymbol {
 };
 const XdkSymbol* xdk_symbol(uint32_t guest_addr);
 const XdkSymbol* xdk_symbol(std::string_view name);  // the first symbol of that name
+// The argument bytes a named library function pops when it returns in this
+// build (xdk_ret_bytes.inc, read from its code), or -1 where that isn't known.
+int xdk_ret_bytes(std::string_view name);
 
 // ---- Reports.
 struct Region {

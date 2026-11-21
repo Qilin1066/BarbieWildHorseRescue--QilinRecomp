@@ -261,6 +261,8 @@ namespace {
 constexpr XdkSymbol kXdkSymbols[] = {
     {0, "", ""},
 #include "xdk_symbols.inc"
+    // Identified by reading them.
+    {0x00167250, "D3D8", "D3DDevice_BlockUntilIdle"},  // a jump to D3D_KickOffAndWaitForIdle
 };
 }  // namespace
 
@@ -273,6 +275,20 @@ const XdkSymbol* xdk_symbol(std::string_view name) {
     for (const XdkSymbol& s : kXdkSymbols)
         if (s.address != 0 && name == s.name) return &s;
     return nullptr;
+}
+
+int xdk_ret_bytes(std::string_view name) {
+    struct Pops {
+        const char* name;
+        int bytes;
+    };
+    static constexpr Pops kPops[] = {
+        {"", -1},
+#include "xdk_ret_bytes.inc"
+    };
+    for (const Pops& p : kPops)
+        if (name == p.name) return p.bytes;
+    return -1;
 }
 
 std::string describe(uint32_t a) {

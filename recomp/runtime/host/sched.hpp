@@ -23,6 +23,9 @@ using Clock = std::chrono::steady_clock;
 // so the library doesn't need lifted code linked).
 using GuestCall = void (*)(rt::Context&, uint32_t, std::initializer_list<uint32_t>);
 void init_main(rt::Context& c, uint32_t kthread, GuestCall call);
+// A guest function called from kernel code (an APC's routine), through the
+// call init_main was given, so the kernel needs no lifted code to link.
+void call_guest(rt::Context& c, uint32_t fn, std::initializer_list<uint32_t> args);
 bool started();
 bool on_main_thread();  // the host thread the runtime started on (SDL's events go there)
 
@@ -33,6 +36,10 @@ void sleep_until(Clock::time_point t);
 // Sets a KEVENT in guest memory from runtime code (a DirectSound packet's
 // completion event), waking what waits on it, as KeSetEvent.
 void set_event(uint32_t event);
+
+// A user-mode APC for the calling guest thread (an I/O completion routine),
+// run the next time it waits alertably: as NtQueueApcThread on itself.
+void queue_apc_self(uint32_t routine, uint32_t context, uint32_t arg1, uint32_t arg2);
 
 // The interrupt clock: 100 ns since the runtime started.
 uint64_t interrupt_time();

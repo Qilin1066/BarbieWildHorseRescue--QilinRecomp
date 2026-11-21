@@ -236,9 +236,10 @@ add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 # analysis (they are registered at addresses in the game's XBE).
 add_library(qilin_host STATIC recomp/runtime/host/host.cpp recomp/runtime/host/kernel.cpp recomp/runtime/host/kernel_crypto.cpp
                               recomp/runtime/host/sched.cpp recomp/runtime/host/kernel_io.cpp recomp/runtime/host/call_guest.cpp
-                              recomp/runtime/host/guest_ram.cpp recomp/runtime/host/tsc.cpp recomp/runtime/host/game_native.cpp recomp/runtime/host/xinput.cpp recomp/runtime/host/dsound.cpp)
+                              recomp/runtime/host/guest_ram.cpp recomp/runtime/host/tsc.cpp recomp/runtime/host/game_native.cpp recomp/runtime/host/xinput.cpp recomp/runtime/host/dsound.cpp
+                              recomp/runtime/host/d3d.cpp recomp/runtime/host/aspect.cpp)
 target_include_directories(qilin_host PUBLIC recomp/runtime/host PRIVATE recomp/src)
-target_link_libraries(qilin_host PUBLIC qilin_runtime qilin_platform qilin_audio PRIVATE qilin_warnings)
+target_link_libraries(qilin_host PUBLIC qilin_runtime qilin_gfx qilin_audio qilin_platform qilin_ui PRIVATE qilin_warnings)
 add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp)
 target_link_libraries(qilin_host_tests PRIVATE qilin_host qilin_warnings)
 add_test(NAME qilin_host_tests COMMAND qilin_host_tests)

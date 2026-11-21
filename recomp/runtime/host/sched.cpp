@@ -13,6 +13,7 @@
 #include "sched.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -42,7 +43,8 @@ void st(const rt::Context& c, uint32_t a, uint32_t v) { rt::st32(mem(c), a, v, 0
 
 constexpr uint32_t kStatusSuccess = 0, kStatusTimeout = 0x102, kStatusAbandoned = 0x80, kStatusNoYield = 0x40000024,
                    kStatusInvalidHandle = 0xC0000008, kStatusInvalidParameter = 0xC000000D, kStatusNoMemory = 0xC0000017,
-                   kStatusTypeMismatch = 0xC0000024, kStatusMutantNotOwned = 0xC0000046, kStatusSuspendCountExceeded = 0xC000004A;
+                   kStatusTypeMismatch = 0xC0000024, kStatusMutantNotOwned = 0xC0000046, kStatusSuspendCountExceeded = 0xC000004A,
+                   kStatusUserApc = 0xC0;
 
 // DISPATCHER_HEADER.Type
 enum : uint8_t { kNotificationEvent = 0, kSynchronizationEvent = 1, kMutant = 2, kSemaphore = 5, kThreadObject = 6,
@@ -72,6 +74,10 @@ struct Thread {
     std::vector<uint32_t> objects;
     Clock::time_point deadline = Clock::time_point::max();
     uint32_t result = 0;
+    // User-mode APCs queued to it (NtQueueApcThread): {routine, context, two
+    // arguments}, run in order the next time it waits alertably in user mode.
+    std::deque<std::array<uint32_t, 4>> apcs;
+    bool alertable = false;  // in such a wait now
     // The NT_TIB fields the processor's KPCR holds for the running thread.
     uint32_t exception_list = 0xFFFFFFFFu, stack_base = 0, stack_limit = 0;
     uint8_t irql = 0;  // the KPCR's Irql while it runs (switches happen below DISPATCH_LEVEL)
@@ -229,10 +235,14 @@ void signalled_changed() {
 }
 
 // The calling guest thread waits (KeWaitForMultipleObjects's semantics).
-uint32_t wait(std::vector<uint32_t> objects, bool all, std::optional<Clock::time_point> until) {
+// An alertable user-mode wait ends with STATUS_USER_APC when an APC is
+// queued (or already is); the caller then runs them (deliver_apcs).
+uint32_t wait(std::vector<uint32_t> objects, bool all, std::optional<Clock::time_point> until, bool alertable = false) {
     Thread* me = t_self;
     if (!me) rt::trap(0, "a kernel wait outside a guest thread");
     std::unique_lock lk(s().mu);
+    if (alertable && !me->apcs.empty()) return kStatusUserApc;
+    me->alertable = alertable;
     me->objects = std::move(objects);
     me->wait_all = all;
     if (auto r = try_satisfy(me)) return *r;
@@ -242,7 +252,26 @@ uint32_t wait(std::vector<uint32_t> objects, bool all, std::optional<Clock::time
     me->deadline = until.value_or(Clock::time_point::max());
     s().waiting.push_back(me);
     switch_out(me, lk);
+    me->alertable = false;
     return me->result;
+}
+
+// The calling thread's queued APCs, run in order on its own registers (as
+// the kernel does on the way out of the wait), then the wait's status.
+uint32_t deliver_apcs(rt::Context& c, uint32_t status) {
+    if (status != kStatusUserApc) return status;
+    Thread* me = t_self;
+    for (;;) {
+        std::array<uint32_t, 4> apc;
+        {
+            std::lock_guard lk(s().mu);
+            if (me->apcs.empty()) break;
+            apc = me->apcs.front();
+            me->apcs.pop_front();
+        }
+        s().call(c, apc[0], {apc[1], apc[2], apc[3]});
+    }
+    return status;
 }
 
 // LARGE_INTEGER* timeout: null forever, negative relative, else an absolute system time.
@@ -649,19 +678,24 @@ void nt_set_event(rt::Context& c) {
 // (I/O completes at once), so an alertable wait is an ordinary one.
 void ke_wait_for_single_object(rt::Context& c) {
     const uint32_t o = arg(c, 0), timeout = arg(c, 4);
-    ret(c, wait({o}, false, timeout_at(c, timeout)), 20);
+    const bool alertable = arg(c, 2) == 1 && (arg(c, 3) & 0xFF);
+    const uint32_t r = deliver_apcs(c, wait({o}, false, timeout_at(c, timeout), alertable));
+    ret(c, r, 20);
 }
 // NTSTATUS NtWaitForSingleObjectEx(HANDLE, KPROCESSOR_MODE, BOOLEAN Alertable, PLARGE_INTEGER) (235)
 void nt_wait_for_single_object_ex(rt::Context& c) {
     const uint32_t o = object_of(arg(c, 0));
     if (!o) return ret(c, kStatusInvalidHandle, 16);
-    ret(c, wait({o}, false, timeout_at(c, arg(c, 3))), 16);
+    const bool alertable = arg(c, 1) == 1 && (arg(c, 2) & 0xFF);
+    const uint32_t r = deliver_apcs(c, wait({o}, false, timeout_at(c, arg(c, 3)), alertable));
+    ret(c, r, 16);
 }
 // NTSTATUS NtWaitForSingleObject(HANDLE, BOOLEAN Alertable, PLARGE_INTEGER) (234)
 void nt_wait_for_single_object(rt::Context& c) {
     const uint32_t o = object_of(arg(c, 0));
     if (!o) return ret(c, kStatusInvalidHandle, 12);
-    ret(c, wait({o}, false, timeout_at(c, arg(c, 2))), 12);
+    const uint32_t r = deliver_apcs(c, wait({o}, false, timeout_at(c, arg(c, 2)), (arg(c, 1) & 0xFF) != 0));  // user mode
+    ret(c, r, 12);
 }
 // NTSTATUS NtWaitForMultipleObjectsEx(ULONG Count, HANDLE[], WAIT_TYPE (0 all,
 //     1 any), KPROCESSOR_MODE, BOOLEAN Alertable, PLARGE_INTEGER) (233)
@@ -674,19 +708,48 @@ void nt_wait_for_multiple_objects_ex(rt::Context& c) {
         if (!o) return ret(c, kStatusInvalidHandle, 24);
         objs.push_back(o);
     }
-    ret(c, wait(std::move(objs), type == 0, timeout_at(c, arg(c, 5))), 24);
+    const bool alertable = arg(c, 3) == 1 && (arg(c, 4) & 0xFF);
+    const uint32_t r = deliver_apcs(c, wait(std::move(objs), type == 0, timeout_at(c, arg(c, 5)), alertable));
+    ret(c, r, 24);
 }
 
 // NTSTATUS KeDelayExecutionThread(KPROCESSOR_MODE, BOOLEAN Alertable, PLARGE_INTEGER Interval) (99)
 uint32_t yield();
 void ke_delay_execution_thread(rt::Context& c) {
     const auto until = timeout_at(c, arg(c, 2));
-    if (!until || *until <= Clock::now()) {
+    const bool alertable = arg(c, 0) == 1 && (arg(c, 1) & 0xFF);
+    uint32_t r = kStatusSuccess;
+    if (alertable && (!until || *until > Clock::now())) {
+        r = deliver_apcs(c, wait({}, false, until, true));
+        if (r == kStatusTimeout) r = kStatusSuccess;
+    } else if (!until || *until <= Clock::now()) {
         yield();
     } else {
         wait({}, false, until);
     }
-    ret(c, kStatusSuccess, 12);
+    ret(c, r, 12);
+}
+
+// NTSTATUS NtQueueApcThread(HANDLE Thread, PIO_APC_ROUTINE, PVOID ApcRoutineContext,
+//     PIO_STATUS_BLOCK, ULONG ApcReserved) (206): a user-mode APC, run with those
+// three arguments the next time the thread waits alertably (XAPI's
+// QueueUserAPC passes its own trampoline, the function and its argument).
+// A thread already in such a wait leaves it with STATUS_USER_APC.
+void nt_queue_apc_thread(rt::Context& c) {
+    const uint32_t o = object_of(arg(c, 0));
+    if (!o) return ret(c, kStatusInvalidHandle, 20);
+    std::lock_guard lk(s().mu);
+    Thread* t = thread_of(o);
+    if (!t) return ret(c, kStatusTypeMismatch, 20);
+    if (t->terminated) return ret(c, kStatusInvalidHandle, 20);
+    t->apcs.push_back({arg(c, 1), arg(c, 2), arg(c, 3), arg(c, 4)});
+    if (t->waiting && t->alertable) {
+        std::erase(s().waiting, t);
+        t->waiting = false;
+        t->result = kStatusUserApc;
+        make_ready(t);
+    }
+    ret(c, kStatusSuccess, 20);
 }
 
 // Another ready thread of the caller's priority or above goes first.
@@ -860,6 +923,7 @@ constexpr Fn kFns[] = {
     {"NtWaitForSingleObjectEx", 16, nt_wait_for_single_object_ex},
     {"NtWaitForMultipleObjectsEx", 24, nt_wait_for_multiple_objects_ex},
     {"KeDelayExecutionThread", 12, ke_delay_execution_thread},
+    {"NtQueueApcThread", 20, nt_queue_apc_thread},
     {"NtYieldExecution", 0, nt_yield_execution},
     {"KeSetBasePriorityThread", 8, ke_set_base_priority_thread},
     {"NtSuspendThread", 8, nt_suspend_thread},
@@ -923,6 +987,18 @@ void set_event(uint32_t event) {
 }
 
 void wait_object(uint32_t object) { wait({object}, false, std::nullopt); }
+
+void call_guest(rt::Context& c, uint32_t fn, std::initializer_list<uint32_t> args) {
+    if (!s().call) rt::trap(fn, "a guest call from the kernel before the scheduler started");
+    s().call(c, fn, args);
+}
+
+void queue_apc_self(uint32_t routine, uint32_t context, uint32_t arg1, uint32_t arg2) {
+    Thread* me = t_self;
+    if (!me) rt::trap(0, "an APC queued outside a guest thread");
+    std::lock_guard lk(s().mu);
+    me->apcs.push_back({routine, context, arg1, arg2});
+}
 
 uint64_t interrupt_time() {
     return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - s().start).count() / 100);

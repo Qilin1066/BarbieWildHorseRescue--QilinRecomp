@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -27,9 +28,11 @@
 #include "build.hpp"
 #include "game_file.hpp"
 #include "host.hpp"
+#include "input.hpp"
 #include "sched.hpp"
 #include "settings.hpp"
 #include "sha256.hpp"
+#include "window.hpp"
 #include "xbe.hpp"
 
 using namespace qilin;
@@ -57,7 +60,8 @@ int main(int argc, char** argv) {
     const char* path = nullptr;
     const char* game_dir = nullptr;
     const char* data_dir = nullptr;
-    bool any_build = false, mute = false;
+    bool any_build = false, mute = false, headless = false, fullscreen = false;
+    host::D3dConfig d3d;
     std::string dump_audio;
     uint32_t audio_channels = 0;  // the device's own
     uint32_t ram_mb = host::kRetailRamMb;
@@ -83,6 +87,16 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "qilin_run: --audio-channels takes 2 or 6\n");
                 return 2;
             }
+        } else if (a == "--headless") {
+            headless = true;
+        } else if (a == "--fullscreen") {
+            fullscreen = true;
+        } else if (a == "--dump-frames" && k + 1 < argc) {
+            d3d.dump_dir = argv[++k];
+        } else if (a == "--frames" && k + 1 < argc) {
+            d3d.max_frames = std::strtoull(argv[++k], nullptr, 10);
+        } else if (a == "--gpu" && k + 1 < argc) {
+            d3d.gpu = int(std::strtol(argv[++k], nullptr, 10));
         } else if (a == "--any-build") {
             any_build = true;
         } else if (!path) {
@@ -94,7 +108,8 @@ int main(int argc, char** argv) {
     }
     if (!path) {
         std::fprintf(stderr,
-                     "usage: qilin_run [--ram-mb N] [--game-dir DIR] [--data-dir DIR] [--dump-audio FILE.wav] [--mute] [--audio-channels 2|6] [--any-build] <game>\n"
+                     "usage: qilin_run [--ram-mb N] [--game-dir DIR] [--data-dir DIR] [--dump-audio FILE.wav] [--mute] [--audio-channels 2|6]\n"
+                     "                 [--headless] [--fullscreen] [--dump-frames DIR] [--frames N] [--gpu N] [--any-build] <game>\n"
                      "  <game>           an extracted disc's folder, or its default.xbe\n"
                      "  --ram-mb N       guest RAM in MB (%u by default, as the retail Xbox)\n"
                      "  --game-dir DIR   the extracted disc (default: default.xbe's directory)\n"
@@ -102,6 +117,11 @@ int main(int argc, char** argv) {
                      "  --dump-audio FILE.wav  write everything the mixer plays there\n"
                      "  --mute           no sound output (--dump-audio still writes)\n"
                      "  --audio-channels 2 or 6 (5.1); by default 5.1 where the sound device has six or more speakers\n"
+                     "  --headless       no window and no sound device (frames are still drawn, for --dump-frames)\n"
+                     "  --fullscreen     start full screen\n"
+                     "  --dump-frames DIR  write each frame shown there as frame_NNNNN.png\n"
+                     "  --frames N       stop after N frames\n"
+                     "  --gpu N          the Vulkan device to draw with, by index (default: the best)\n"
                      "  --any-build      run an executable that is not the supported build\n",
                      host::kRetailRamMb, platform::default_data_folder().string().c_str());
         return 2;
@@ -206,10 +226,40 @@ int main(int argc, char** argv) {
     host::register_kernel();
     if (supported) {
         host::register_game_natives();
-        host::register_xinput(nullptr);  // no window yet, so no controllers: every port is empty
+        // The settings (wildhorserescue.ini in the data folder): written with the defaults the first time.
+        const std::filesystem::path data_folder = data_dir ? std::filesystem::path(data_dir) : platform::default_data_folder();
+        static platform::Settings settings = platform::load_settings(data_folder);
+        fullscreen = fullscreen || settings.fullscreen;
+        if (!audio_channels) audio_channels = settings.channels;
+        // The picture's shape: the game's own 4:3 until its cameras are understood (aspect.cpp).
+        const float aspect = host::game_aspect_ratio(platform::aspect_ratio(settings, headless ? 0.0f : platform::Window::main_screen_aspect()));
+        host::set_game_aspect(m, aspect, false);
+        d3d.settings = &settings;
+        d3d.settings_folder = data_folder.string();
+        // The window: where there's no display, the game still runs and draws.
+        static std::unique_ptr<platform::Window> window;
+        if (!headless) {
+            std::string why;
+            window = platform::Window::create(std::string(game::kTitle).c_str(), uint32_t(std::lround(480.0f * aspect)), 480, fullscreen, &why);
+            if (!window) std::printf("qilin_run: no window (%s); running without one\n", why.c_str());
+        }
+        // Controllers, read through the window's events; without a window, none.
+        static std::unique_ptr<platform::Input> input;
+        if (window) {
+            input = std::make_unique<platform::Input>();
+            input->start();
+            input->set_keys(settings.keys);
+            input->set_rumble(settings.rumble);
+        }
+        d3d.window = window.get();
+        d3d.input = input.get();
+        host::register_xinput(input.get());
+        // Outside the partitions, so the game's disk never sees it.
+        d3d.pipeline_cache = (data_folder / "vulkan_pipelines.cache").string();
+        host::register_d3d(d3d);
         // Sound: the mixer's output to the default playback device, unless asked not to.
         static std::unique_ptr<platform::AudioOut> sound;
-        if (!mute) {
+        if (!headless && !mute) {
             sound = std::make_unique<platform::AudioOut>();
             if (!sound->start(audio::kOutputRate, audio_channels)) sound.reset();
         }
