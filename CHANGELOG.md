@@ -4,6 +4,10 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-21
+
+Into the game: from power-on through the menus, the New Adventure movie, the stable yard, the dressing room and the stables, and through the Mini-Games lobby into a race, drawn in 3D with lighting, with no stop in any of it.
+
 ### Added
 - `qilin_run --press SCRIPT`: controller presses on port 1 by frame shown (`FRAME:BUTTONS[/FRAMES],...`, e.g. `2300:start/10,2700:a/10`), for runs with no one at the controls. With it the game goes from the title screen through the main menu, the New Adventure movie and loading, into the stables yard and the dressing room, the stables (choosing a horse) and riding round the yard; and through the Mini-Games lobby into a race (Silver Valley Gallop), three laps against Christie. Thumbsticks (`lu ld ll lr`, `ru rd rl rr`) as well as buttons.
 - **Fixed-function lighting**: directional, point and spot lights, the four colour sources (the material's or the vertex's colours with `D3DRS_COLORVERTEX`), global ambient, attenuation and range, the spot cone, normals through the inverse transpose of world × view, `D3DRS_NORMALIZENORMALS`; generated into the fixed-function vertex program. Specular and two-sided lighting still stop the runtime.
