@@ -43,7 +43,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - A cloud session reaches the PC only while the Claude desktop app is open there, and in the sister projects' sessions it could list and stage files (up to 400 MB each) but had no shell. A disc image is larger than that: have `Analyse game.bat` run on the PC, then stage `analysis-out/` (small) and `analysis-out/extracted/default.xbe`. If the owner has an extracted disc, `default.xbe` can be staged directly.
 - Tags don't reach GitHub from a cloud session (the proxy refuses pushing them); `main` does. Releases are marked by their commit's title (`vX.Y.Z: ...`) and the changelog.
 - The cloud workspace (Ubuntu 24.04) has GCC 13 and Clang 18 installed, both below the minimums. `apt-get update && apt-get install -y g++-14 gcc-14` gets GCC 14; for Clang, `pip install ziglang` and wrapper scripts running `python3 -m ziglang cc` / `c++` as `CMAKE_C_COMPILER` / `CMAKE_CXX_COMPILER` (zig's Clang is 22). v0.1.0 was built warning-free with both. MSVC and Apple Clang are checked only by CI.
-- GCC's `-Wshadow` also flags a local reusing a file-scope name (Clang's and MSVC's don't), and MSVC's `[[maybe_unused]]` covers only a declaration's first declarator: both bit the sister projects. Don't name locals `far`, `near` or `huge` (old MSVC macros in Windows headers).
+- GCC's `-Wshadow` also flags a local reusing a file-scope name (Clang's and MSVC's don't), and MSVC's `[[maybe_unused]]` covers only a declaration's first declarator: both bit the sister projects. Don't name locals `far`, `near` or `huge` (old MSVC macros in Windows headers). MSVC's C4127 (an error under `/WX`) fires on a condition built from `game.hpp`'s `constexpr` values: what code asks about at run time (`kSha256`) is a plain `const` there.
 - The tools came from GBTGhoulies v0.41.1. Its CFG pass carries heuristics measured on that game (16-byte function entries for data-pointer and gap seeding, the data sections known by name, "implausible instruction" rules): `docs/recompiler-core.md` lists them. Run `qilin align` and read `coverage --list` before believing a function count.
 - GBTGhoulies' coverage unit test never counted an unknown byte (its region didn't fit the synthetic section); fixed here, worth fixing there.
 - `qilin_tool_*` tests pass by their output (`PASS_REGULAR_EXPRESSION`), not their exit code: `coverage` exits 3 on the synthetic XBE by design (seven bytes of helpers nothing calls).
@@ -53,8 +53,8 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 
 ## Status (v0.1.0)
 
-- The tools build and their tests pass under GCC 14 and Clang (zig) locally. They have run only on synthetic files.
-- Unchecked: **everything on the real game**; the disc reader on a real image; the PowerShell script (never run); MSVC and macOS builds until CI reports.
+- The tools build and their tests pass under GCC 14 and Clang (zig) locally, and CI is green on all six configurations (commit `3aecd83`). They have run only on synthetic files.
+- Unchecked: **everything on the real game**; the disc reader on a real image; the PowerShell script (never run).
 
 ## Next steps, in order
 
