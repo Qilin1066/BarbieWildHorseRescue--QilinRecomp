@@ -1,0 +1,48 @@
+# ---- Game data: never commit (copyright Mattel / Vivendi Universal Games / Blitz Games / Microsoft) ----
+*.xbe
+*.xiso
+*.iso
+*.7z
+*.zip
+*.rar
+*.xwb
+*.xsb
+*.xpr
+*.xbx
+*.bik
+*.xmv
+*.wma
+*.wmv
+/game/
+/disc/
+/dump/
+/extracted/
+
+# Anything derived from the game binary: listings, import lists, CFG dumps, lifted code.
+/analysis-out/
+/generated/
+/gen/
+*.insns.txt
+info.json
+imports.txt
+disc.txt
+cfg.json
+cfg.json.gz
+functions.json
+functions.json.gz
+
+# ---- Build output ----
+/build*/
+/out/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+
+# ---- Editors / OS ----
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+__pycache__/
