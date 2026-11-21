@@ -2,6 +2,11 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.2.1] - 2026-11-21
+
+### Changed
+- The repository is now **BarbieWildHorseRescue--QilinRecomp** (the owner renamed all the QilinRecomp repositories on 2026-11-21: `<Game>--QilinRecomp`). The documents, the CMake project and the links to the sister projects use the new names; earlier entries below keep the names of their day (BeatTheBeat-QilinRecomp is now RhythmHeavenFever--QilinRecomp).
+
 ## [0.2.0] - 2026-11-21
 
 The console-level half of the runtime, from the sister project, and the settings menu on a test card. Still nothing from the game: no copy of it has been available.
@@ -43,4 +48,4 @@ The start of the project: the tools that read the game. Nothing runs yet, and th
 ### Changed (from the sister project's code)
 - The coverage unit test pins the exact accounting of the synthetic `.text`; before, its region didn't fit the section and no unknown byte was ever counted.
 
-[0.1.0]: https://github.com/Qilin1066/Barbie-Wild-Horse-Rescue---QilinRecomp/commits/main
+[0.1.0]: https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/commits/main

@@ -1,7 +1,7 @@
 // The settings file: wildhorserescue.ini in the data folder, as the sister
-// projects keep theirs (ghoulies.ini in GBTGhoulies-QilinRecomp, whose file
-// this is key for key; punchout.ini in PunchOutWii-QilinRecomp, apb.ini in
-// ApbArcade-QilinRecomp): [display], [controls], [sound] and [console]
+// projects keep theirs (ghoulies.ini in GBTGhoulies--QilinRecomp, whose file
+// this is key for key; punchout.ini in PunchOutWii--QilinRecomp, apb.ini in
+// ApbArcade--QilinRecomp): [display], [controls], [sound] and [console]
 // sections, written with every key and comments the first time the game runs. The settings menu (F1 or Esc in the game)
 // changes them and saves them back; the file can be edited by hand too. A
 // line that can't be read is named in the log and left at its default.

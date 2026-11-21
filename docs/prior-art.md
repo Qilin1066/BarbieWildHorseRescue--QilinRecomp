@@ -1,7 +1,7 @@
 # Prior art
 
 ## The sister project on the same console
-**GBTGhoulies-QilinRecomp** (the same owner, the same licence) is a static recompilation of another original Xbox game and is this project's model in everything: requirements, architecture, tools, tests, the runtime's shape, the settings menu. Its `docs/prior-art.md` reviews the other original-Xbox recompilation efforts (xboxrecomp, XboxXBERecomp, a Halo 2 matching decompilation, XbSymbolDatabase) and records the decisions drawn from them; they hold here unchanged and are not repeated:
+**GBTGhoulies--QilinRecomp** (the same owner, the same licence) is a static recompilation of another original Xbox game and is this project's model in everything: requirements, architecture, tools, tests, the runtime's shape, the settings menu. Its `docs/prior-art.md` reviews the other original-Xbox recompilation efforts (xboxrecomp, XboxXBERecomp, a Halo 2 matching decompilation, XbSymbolDatabase) and records the decisions drawn from them; they hold here unchanged and are not repeated:
 
 1. Zydis as the decoder, vendored, cross-checked against LLVM on every instruction.
 2. XDK library functions named with XbSymbolDatabase (MIT) signatures; our own only where it lacks the game's XDK build.

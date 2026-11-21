@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue-QilinRecomp VERSION 0.2.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.2.1 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -200,7 +200,7 @@ add_library(qilin_platform STATIC recomp/runtime/platform/window.cpp recomp/runt
 target_include_directories(qilin_platform PUBLIC recomp/runtime/platform)
 target_link_libraries(qilin_platform PUBLIC SDL3::SDL3 PRIVATE qilin_warnings)
 
-# ---- The settings menu: Dear ImGui (MIT, vendored as ApbArcade-QilinRecomp has it) over the window ----
+# ---- The settings menu: Dear ImGui (MIT, vendored as ApbArcade--QilinRecomp has it) over the window ----
 add_library(qilin_imgui STATIC
     third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
     third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_sdl3.cpp
@@ -229,4 +229,4 @@ add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 
 # The runtime's host side (the kernel, Direct3D, DirectSound and the game's
 # own replacements) and qilin_run come with roadmap step 3, from
-# GBTGhoulies-QilinRecomp, once the game has been analysed.
+# GBTGhoulies--QilinRecomp, once the game has been analysed.

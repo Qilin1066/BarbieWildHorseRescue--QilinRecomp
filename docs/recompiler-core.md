@@ -1,6 +1,6 @@
 # The recompiler core
 
-The tools in `recomp/src/` are GBTGhoulies-QilinRecomp's (v0.41.1, the same owner), brought over whole because the console, the executable format, the instruction set and the compiler generation are the same. This file says what they are, what was changed, and what is not yet known. That project's `docs/recompiler-core.md` is the long record of how each pass came to its design and of the dead ends; read it before reworking a pass.
+The tools in `recomp/src/` are GBTGhoulies--QilinRecomp's (v0.41.1, the same owner), brought over whole because the console, the executable format, the instruction set and the compiler generation are the same. This file says what they are, what was changed, and what is not yet known. That project's `docs/recompiler-core.md` is the long record of how each pass came to its design and of the dead ends; read it before reworking a pass.
 
 **None of this has been run on the game.** Every result so far is on the synthetic XBE and disc image the tests build in memory.
 
@@ -9,7 +9,7 @@ The tools in `recomp/src/` are GBTGhoulies-QilinRecomp's (v0.41.1, the same owne
 |---|---|
 | `xbe.*`, `xbe_json.cpp` | The XBE loader: headers, certificate, sections, library versions, kernel thunks, a flat image. Every read is bounds-checked; a malformed file is an error message |
 | `xiso.*` | The Xbox DVD file system: the game partition found at its offset in a full-disc dump or at 0, the volume descriptor, the directory trees. New in this project |
-| `sha256.*` | SHA-256, to recognise the supported build (from WindWakerHD-QilinRecomp) |
+| `sha256.*` | SHA-256, to recognise the supported build (from WindWakerHD--QilinRecomp) |
 | `decoder.*` | Zydis wrapped: compact instructions, cached; flags read, written and defined per instruction |
 | `cfg.*`, `vrange.*` | Function discovery and control flow: linear seeds, recursive descent, switch tables with proven sizes (value-range analysis), C++ exception and SEH tables, validation that drops data decoded as code, byte coverage |
 | `lifter.*` | One function to C++: registers in host locals, flags only where read, labels and gotos, `switch` for jump tables, integer, scalar SSE, x87 with precision control, string operations, direct, indirect and tail calls, C++ exception frames |

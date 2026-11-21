@@ -1,14 +1,14 @@
-# Barbie-Wild-Horse-Rescue---QilinRecomp
+# BarbieWildHorseRescue--QilinRecomp
 
 A static recompilation of **Barbie Horse Adventures: Wild Horse Rescue** (Blitz Games / Vivendi Universal Games, original Xbox, 2003, the USA release) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. Anything with a Vulkan 1.3 driver is in scope, including the Raspberry Pi 4 (Mesa 24.3+); Macs are covered through MoltenVK. Efficiency is the first priority: a Raspberry Pi 4–class board is our reference for typical low-end hardware, not a floor.
 
-It has the same requirements and scope as its sister projects, [GBTGhoulies-QilinRecomp](https://github.com/Qilin1066/GBTGhoulies-QilinRecomp) (the same console, and this project's model), [PunchOutWii-QilinRecomp](https://github.com/Qilin1066/PunchOutWii-QilinRecomp), [BeatTheBeat-QilinRecomp](https://github.com/Qilin1066/BeatTheBeat-QilinRecomp), [ApbArcade-QilinRecomp](https://github.com/Qilin1066/ApbArcade-QilinRecomp), [WindWakerHD-QilinRecomp](https://github.com/Qilin1066/WindWakerHD-QilinRecomp) and [ToyCommander-QilinRecomp](https://github.com/Qilin1066/ToyCommander-QilinRecomp), down to the same settings menu.
+It has the same requirements and scope as its sister projects, [GBTGhoulies--QilinRecomp](https://github.com/Qilin1066/GBTGhoulies--QilinRecomp) (the same console, and this project's model), [PunchOutWii--QilinRecomp](https://github.com/Qilin1066/PunchOutWii--QilinRecomp), [RhythmHeavenFever--QilinRecomp](https://github.com/Qilin1066/RhythmHeavenFever--QilinRecomp), [ApbArcade--QilinRecomp](https://github.com/Qilin1066/ApbArcade--QilinRecomp), [WindWakerHD--QilinRecomp](https://github.com/Qilin1066/WindWakerHD--QilinRecomp) and [ToyCommander--QilinRecomp](https://github.com/Qilin1066/ToyCommander--QilinRecomp), down to the same settings menu.
 
 > **No game data is included, and none ever will be.** You need your own copy of the game. The tools read your disc image, or the files extracted from it, from a path you give them. `.gitignore` keeps game files, and anything generated from them, out of the repo.
 
 ## Status
 
-**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level half of the runtime (renderer, sound, window, input, the settings menu), brought over from GBTGhoulies-QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
+**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level half of the runtime (renderer, sound, window, input, the settings menu), brought over from GBTGhoulies--QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
 
 | Piece | State |
 |---|---|
@@ -19,7 +19,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies-Qili
 | Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | ✅ carried over; not yet run on the game |
 | What the analysis has established about the game (`recomp/src/game.hpp`) | empty: nothing is assumed from another game |
 | Differential test of every lifted function against the original x86 | to do, with the game |
-| Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies-QilinRecomp (v0.2.0), with their tests; not yet driven by the game |
+| Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
 | Runtime host side: the kernel and the XDK libraries replaced natively, `qilin_run` | to do: it depends on the analysis |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
