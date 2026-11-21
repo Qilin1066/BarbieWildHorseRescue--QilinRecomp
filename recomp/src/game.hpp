@@ -43,6 +43,7 @@ inline const std::vector<Range> kLibraries = {
     {0x146506, 0x160130},  // the C runtime and the rest of XAPI
     {0x17A540, 0x1A4500},  // the XGRPH section: XGraphics
     {0x1C1AE0, 0x1DAD54},  // the WMADEC section: the WMA decoder
+    {0x1DAD60, 0x202B3C},  // the XMV section: the movie decoder (WMV video, WMA sound), over Direct3D's surfaces and DirectSound's streams
 };
 // Single functions of natively replaced libraries that are lifted all the
 // same (pure computation whose exact results matter).

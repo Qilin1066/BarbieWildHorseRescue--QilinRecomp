@@ -25,6 +25,7 @@
 #include <atomic>
 #include <type_traits>
 #include <cstdint>
+#include <limits>
 #include <cstring>
 
 #include "x87_math.hpp"
@@ -190,6 +191,50 @@ inline uint64_t sar(uint64_t a, uint64_t n) {
     using U = std::make_unsigned_t<L>;
     const int k = n >= sizeof(L) * 8 ? int(sizeof(L) * 8 - 1) : int(n);
     return lanes<U>(a, 0, [k](U x, U) { return U(L(x) >> k); });
+}
+// Comparisons: each lane all ones where it holds, else 0. pcmpgt is signed.
+template <typename L>
+inline uint64_t cmpeq(uint64_t a, uint64_t b) { return lanes<L>(a, b, [](L x, L y) { return L(x == y ? ~L(0) : L(0)); }); }
+template <typename S>
+inline uint64_t cmpgt(uint64_t a, uint64_t b) {
+    using U = std::make_unsigned_t<S>;
+    return lanes<U>(a, b, [](U x, U y) { return U(S(x) > S(y) ? ~U(0) : U(0)); });
+}
+// pavgb / pavgw: (a + b + 1) >> 1, unsigned, without overflow.
+template <typename L>
+inline uint64_t avg(uint64_t a, uint64_t b) { return lanes<L>(a, b, [](L x, L y) { return L((uint32_t(x) + uint32_t(y) + 1u) >> 1); }); }
+// pminub, pmaxub (unsigned bytes), pminsw, pmaxsw (signed words).
+template <typename S>
+inline uint64_t min(uint64_t a, uint64_t b) {
+    using U = std::make_unsigned_t<S>;
+    return lanes<U>(a, b, [](U x, U y) { return S(x) < S(y) ? x : y; });
+}
+template <typename S>
+inline uint64_t max(uint64_t a, uint64_t b) {
+    using U = std::make_unsigned_t<S>;
+    return lanes<U>(a, b, [](U x, U y) { return S(x) > S(y) ? x : y; });
+}
+// Saturating add and subtract, signed or unsigned by the lane type.
+template <typename S>
+inline uint64_t addsat(uint64_t a, uint64_t b) {
+    using U = std::make_unsigned_t<S>;
+    return lanes<U>(a, b, [](U x, U y) {
+        const int32_t v = int32_t(S(x)) + int32_t(S(y));
+        const int32_t lo = int32_t(std::numeric_limits<S>::min()), hi = int32_t(std::numeric_limits<S>::max());
+        return U(S(v < lo ? lo : v > hi ? hi : v));
+    });
+}
+template <typename S>
+inline uint64_t subsat(uint64_t a, uint64_t b) {
+    using U = std::make_unsigned_t<S>;
+    return lanes<U>(a, b, [](U x, U y) {
+        const int32_t v = int32_t(S(x)) - int32_t(S(y));
+        const int32_t lo = int32_t(std::numeric_limits<S>::min()), hi = int32_t(std::numeric_limits<S>::max());
+        return U(S(v < lo ? lo : v > hi ? hi : v));
+    });
+}
+inline uint64_t pmulhuw(uint64_t a, uint64_t b) {
+    return lanes<uint16_t>(a, b, [](uint16_t x, uint16_t y) { return uint16_t((uint32_t(x) * uint32_t(y)) >> 16); });
 }
 // Unpacks: the low (or high) halves of a and b, interleaved a, b, a, b.
 template <typename L>

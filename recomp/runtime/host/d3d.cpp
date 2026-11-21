@@ -133,6 +133,13 @@ struct Device {
     uint32_t depth = 0;                   // guest surface, or 0
     uint32_t vblank_callback = 0, vblank_data = 0;
     uint32_t vblanks = 0, swaps = 0;
+    // The video overlay (UpdateOverlay): the vblank count when it was last
+    // updated, and the frame it was shown over (the front buffer as the game
+    // left it, read back once per Swap), which the colour key cuts through.
+    uint32_t overlay_vblank = 0;
+    uint64_t frames_shown = 0;  // presented by Swap or by an overlay update (--dump-frames, --frames)
+    gfx::Image overlay_base;
+    uint32_t overlay_base_swaps = ~0u;
     // Bumped whenever the CPU may have changed a resource's memory: a lock
     // or a destroy (both reach D3D_BlockOnResource), or a CopyRects. A
     // render target's memory is compared again only after one of these,
@@ -436,7 +443,7 @@ void frame_pacing(rt::Context& c, Device& d) {
 
 // ---------------------------------------------------------------- frames out
 void deliver_frame(Device& d) {
-    const uint64_t n = d.renderer->frames_presented();
+    const uint64_t n = ++d.frames_shown;
     static const char* trace_dir = std::getenv("QILIN_TRACE_DUMP");
     if (!d.config.dump_dir.empty() || (trace_dir && trace_draws(d) && std::exchange(g_trace_matched, false))) {
         gfx::Image im = d.renderer->read_front_buffer();
@@ -569,6 +576,114 @@ void create_device(rt::Context& c) {
     init_device_state(c);
     if (out) st(c, out, kDeviceStorage);
     ret(c, 0, 24);  // D3D_OK
+}
+
+// VOID D3DDevice_GetDisplayMode(D3DDISPLAYMODE*): Width, Height,
+// RefreshRate, Flags, Format, as the original (0x167460) reads them: the
+// front buffer's size and format, and the display's rate and flags. The
+// display here is the console's standard 480-line NTSC one: 60 Hz,
+// interlaced (D3DPRESENTFLAG_INTERLACED), 4:3 (the widescreen flag follows
+// the picture shape the game is given, which is 4:3 for now: aspect.cpp).
+void get_display_mode(rt::Context& c) {
+    const Device& d = device("D3DDevice_GetDisplayMode");
+    const uint32_t out = arg(c, 0), front = d.frame_buffers[d.renderer->front_index()];
+    st(c, out, d.width);
+    st(c, out + 4, d.height);
+    st(c, out + 8, 60);
+    st(c, out + 12, 0x20);
+    st(c, out + 16, (ld(c, front + 12) >> 8) & 0xFF);
+    ret(c, c.eax, 4);
+}
+
+// ---------------------------------------------------------------- the video overlay
+// The NV2A's overlay: a YUY2 surface the display scales into a rectangle of
+// the screen as it scans out, over the frame buffer, where the frame
+// buffer's pixel is the colour key if one is enabled. The game plays its
+// movies (XMV) through it, without Swap. Here each update is composed into
+// the frame buffer being shown (over the frame the game last presented) and
+// shown again at once; the update counts as taken at the next vblank, as
+// GetOverlayUpdateStatus reports it.
+
+void pump_window(const Device& d);
+std::pair<uint32_t, uint32_t> surface_size(const rt::Context& c, uint32_t surf);
+
+// VOID D3DDevice_GetDisplayFieldStatus(D3DFIELD_STATUS*): Field, VBlankCount.
+// The display is interlaced (GetDisplayMode), so the field is odd (1) or
+// even (2), alternating every vblank, as the original reads the display's
+// field register (0x168410); a progressive display would give 3.
+void get_display_field_status(rt::Context& c) {
+    const Device& d = device("D3DDevice_GetDisplayFieldStatus");
+    const uint32_t out = arg(c, 0), n = vblanks_elapsed(d);
+    st(c, out, 1u + (n & 1u));
+    st(c, out + 4, n);
+    ret(c, c.eax, 4);
+}
+
+// VOID D3DDevice_EnableOverlay(BOOL): this build's (0x174C20) resets the
+// overlay whatever the argument, and nothing shows until the next update.
+void enable_overlay(rt::Context& c) {
+    Device& d = device("D3DDevice_EnableOverlay");
+    if (d.overlay_base_swaps == d.swaps && !d.overlay_base.rgba.empty()) {  // take the overlay off the screen
+        d.renderer->write_frame_buffer(d.renderer->front_index(), d.overlay_base);
+        d.renderer->show_front();
+    }
+    d.overlay_base_swaps = ~0u;
+    ret(c, c.eax, 4);
+}
+
+// BOOL D3DDevice_GetOverlayUpdateStatus(): whether the last update has been
+// taken (a vblank has begun since it), as the original compares the
+// device's vblank count with the one UpdateOverlay noted.
+void get_overlay_update_status(rt::Context& c) {
+    const Device& d = device("D3DDevice_GetOverlayUpdateStatus");
+    ret(c, vblanks_elapsed(d) != d.overlay_vblank ? 1u : 0u, 0);
+}
+
+// VOID D3DDevice_UpdateOverlay(D3DSurface*, CONST RECT* SrcRect, CONST RECT*
+//     DstRect, BOOL EnableColorKey, D3DCOLOR ColorKey)
+void update_overlay(rt::Context& c) {
+    const char* fn = "D3DDevice_UpdateOverlay";
+    Device& d = device(fn);
+    const uint32_t surf = arg(c, 0), src = arg(c, 1), dst = arg(c, 2), keyed = arg(c, 3), key = arg(c, 4) & 0xFFFFFFu;
+    d.overlay_vblank = vblanks_elapsed(d);
+    if (!surf || !src || !dst) unmodelled(fn, "a null surface or rectangle");
+    const uint32_t format = (ld(c, surf + 12) >> 8) & 0xFF, size = ld(c, surf + 16);
+    if (format != 0x24 || !size) unmodelled(fn, strf("an overlay surface of format %#x (only linear YUY2, 0x24, is)", format));
+    const auto [sw, sh] = surface_size(c, surf);
+    const uint32_t pitch = ((size >> 24) + 1) * 64, data = ld(c, surf + 4);
+    const int32_t sx0 = int32_t(ld(c, src)), sy0 = int32_t(ld(c, src + 4)), sx1 = int32_t(ld(c, src + 8)), sy1 = int32_t(ld(c, src + 12));
+    const int32_t dx0 = int32_t(ld(c, dst)), dy0 = int32_t(ld(c, dst + 4)), dx1 = int32_t(ld(c, dst + 8)), dy1 = int32_t(ld(c, dst + 12));
+    if (sx0 < 0 || sy0 < 0 || sx1 > int32_t(sw) || sy1 > int32_t(sh) || sx1 <= sx0 || sy1 <= sy0 || dx1 <= dx0 || dy1 <= dy0)
+        unmodelled(fn, strf("source (%d, %d)-(%d, %d) of a %ux%u surface to (%d, %d)-(%d, %d)", sx0, sy0, sx1, sy1, sw, sh, dx0, dy0, dx1, dy1));
+    if (uint64_t(data) + uint64_t(pitch) * sh > c.mem_size) unmodelled(fn, "a surface outside guest memory");
+    if (d.overlay_base_swaps != d.swaps) {
+        d.overlay_base = d.renderer->read_front_buffer();
+        d.overlay_base_swaps = d.swaps;
+    }
+    gfx::Image im = d.overlay_base;
+    const uint8_t* p = c.mem + data;
+    // BT.601, video range, as the overlay's colour conversion; each
+    // destination pixel from the nearest source one.
+    auto clamp8 = [](int v) { return uint8_t(v < 0 ? 0 : v > 255 ? 255 : v); };
+    for (int32_t y = std::max(dy0, 0); y < std::min<int32_t>(dy1, int32_t(im.height)); ++y) {
+        const int32_t sy = sy0 + int32_t((int64_t(y - dy0) * (sy1 - sy0)) / (dy1 - dy0));
+        for (int32_t x = std::max(dx0, 0); x < std::min<int32_t>(dx1, int32_t(im.width)); ++x) {
+            uint8_t* o = &im.rgba[(size_t(y) * im.width + size_t(x)) * 4];
+            if (keyed && (uint32_t(o[0]) << 16 | uint32_t(o[1]) << 8 | o[2]) != key) continue;
+            const int32_t sx = sx0 + int32_t((int64_t(x - dx0) * (sx1 - sx0)) / (dx1 - dx0));
+            const uint8_t* pair = p + size_t(sy) * pitch + size_t(sx & ~1) * 2;  // Y0 U Y1 V
+            const int yy = 298 * (int(pair[(sx & 1) * 2]) - 16), u = int(pair[1]) - 128, v = int(pair[3]) - 128;
+            o[0] = clamp8((yy + 409 * v + 128) >> 8);
+            o[1] = clamp8((yy - 100 * u - 208 * v + 128) >> 8);
+            o[2] = clamp8((yy + 516 * u + 128) >> 8);
+            o[3] = 255;
+        }
+    }
+    d.renderer->write_frame_buffer(d.renderer->front_index(), im);
+    d.renderer->show_front();
+    deliver_frame(d);
+    pump_window(d);
+    ret(c, c.eax, 20);
 }
 
 // D3DSurface* D3DDevice_GetBackBuffer2(INT BackBuffer): -1 is the front
@@ -3686,6 +3801,11 @@ constexpr D3dFn kD3d[] = {
     {"Direct3D_SetPushBufferSize", 8, set_push_buffer_size},
     {"Direct3D_CreateDevice", 24, create_device},
     {"D3DDevice_GetBackBuffer2", 4, get_back_buffer2},
+    {"D3DDevice_GetDisplayMode", 4, get_display_mode},
+    {"D3DDevice_EnableOverlay", 4, enable_overlay},
+    {"D3DDevice_GetDisplayFieldStatus", 4, get_display_field_status},
+    {"D3DDevice_GetOverlayUpdateStatus", 0, get_overlay_update_status},
+    {"D3DDevice_UpdateOverlay", 20, update_overlay},
     {"D3DDevice_GetDepthStencilSurface2", 0, get_depth_stencil_surface2},
     {"D3DDevice_GetRenderTarget2", 0, get_render_target2},
     {"D3D_BlockOnResource", 4, block_on_resource},

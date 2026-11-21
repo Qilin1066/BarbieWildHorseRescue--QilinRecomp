@@ -79,6 +79,7 @@ struct Buffer {
     // it takes at once, and the packets submitted and not yet completed, by id.
     bool stream = false;
     bool resume_on_start = false;  // Pause(3) on a voice not yet running: resume when it starts
+    bool synch_paused = false;     // Pause(2): until IDirectSound_SynchPlayback
     uint32_t callback = 0, context = 0, max_packets = 0;
     struct Packet {
         uint32_t completed_size = 0, status = 0, event = 0, context = 0;  // XMEDIAPACKET's pointers and context
@@ -821,18 +822,14 @@ void set_i3dl2_listener(rt::Context& c) {
 // GetStatus, Process, Discontinuity, Flush), the second its inner
 // interface's (0x20A028), so XACT's calls through the vtable reach the
 // replacements registered at those methods' addresses.
-// (The sister game's addresses: this game creates no stream. Zero here, and
-// CreateSoundStream stops until this build's vtables are located.)
-constexpr uint32_t kStreamVtable = 0, kStreamInnerVtable = 0;
+// Here 0x229F0C and 0x229EFC, as CDirectSoundStream's constructor
+// (0x1A61C4) stores them.
+constexpr uint32_t kStreamVtable = 0x229F0C, kStreamInnerVtable = 0x229EFC;
 
 // HRESULT IDirectSound_CreateSoundStream(LPDIRECTSOUND, LPCDSSTREAMDESC, LPDIRECTSOUNDSTREAM*, LPUNKNOWN)
 // DSSTREAMDESC: dwFlags, dwMaxAttachedPackets, lpwfxFormat, lpfnCallback, lpvContext, lpMixBins.
-void create_sound_stream(rt::Context& c) {
-    Lock lock_(ds().m);
-    const char* fn = "IDirectSound_CreateSoundStream";
-    if (!kStreamVtable) unmodelled(fn, "a stream (this build's stream vtables aren't located)");
+void create_stream(rt::Context& c, const char* fn, uint32_t desc, uint32_t out) {
     catch_up(c);
-    const uint32_t desc = arg(c, 1), out = arg(c, 2);
     const uint32_t flags = ld(c, desc), max_packets = ld(c, desc + 4), wfx = ld(c, desc + 8);
     // 0x10 is DSSTREAMCAPS_CTRL3D. XACT also sets 0x20000000 and 0x00400000,
     // which emulator sources name DSSTREAMCAPS_ACCURATENOTIFY and NOMERGE (not
@@ -856,7 +853,20 @@ void create_sound_stream(rt::Context& c) {
     st(c, obj + 4, kStreamInnerVtable);
     ds().buffers[obj] = std::move(b);
     st(c, out, obj);
+}
+void create_sound_stream(rt::Context& c) {
+    Lock lock_(ds().m);
+    create_stream(c, "IDirectSound_CreateSoundStream", arg(c, 1), arg(c, 2));
     ret(c, kDsOk, 16);
+}
+// HRESULT DirectSoundCreateStream(LPCDSSTREAMDESC, LPDIRECTSOUNDSTREAM*): a
+// stream on the one DirectSound object, which the title has made already
+// (the original makes it if need be: that stops here).
+void direct_sound_create_stream(rt::Context& c) {
+    Lock lock_(ds().m);
+    if (!ds().object) unmodelled("DirectSoundCreateStream", "a stream before DirectSoundCreate");
+    create_stream(c, "DirectSoundCreateStream", arg(c, 0), arg(c, 1));
+    ret(c, kDsOk, 8);
 }
 
 Buffer& stream(rt::Context& c, uint32_t a, const char* fn) {
@@ -906,8 +916,11 @@ void stream_get_status(rt::Context& c) {
 
 // HRESULT Process(LPCXMEDIAPACKET pInputPacket, LPXMEDIAPACKET pOutputPacket):
 // XMEDIAPACKET { pvBuffer, dwMaxSize, pdwCompletedSize, pdwStatus,
-// hCompletionEvent, prtTimestamp, pContext }. The packet is queued behind
-// the others, its status pending until it has played.
+// union { hCompletionEvent, pContext }, prtTimestamp }: six words, as this
+// build's stream copies it (0x1A9708). The union is the packet's context
+// for a stream with a callback, else the event handle to set (NtSetEvent,
+// 0x1A8B24). The packet is queued behind the others, its status pending
+// until it has played.
 void stream_process(rt::Context& c) {
     Lock lock_(ds().m);
     const char* fn = "CDirectSoundStream_Process";
@@ -931,7 +944,14 @@ void stream_process(rt::Context& c) {
     if (ld(c, pkt + 20)) unmodelled(fn, "a packet with a time stamp");
     const uint32_t block = b.voice.format().block_bytes();
     if (bytes % block) unmodelled(fn, strf("a packet of %u bytes (not whole %u-byte blocks)", bytes, block));
-    Buffer::Packet p{ld(c, pkt + 8), ld(c, pkt + 12), ld(c, pkt + 16), ld(c, pkt + 24)};
+    const uint32_t either = ld(c, pkt + 16);
+    Buffer::Packet p{ld(c, pkt + 8), ld(c, pkt + 12), 0, 0};
+    if (b.callback) {
+        p.context = either;
+    } else if (either) {
+        p.event = sched::handle_object(either);
+        if (!p.event) unmodelled(fn, strf("a packet whose completion event handle %08X isn't an event", either));
+    }
     if (p.status) st(c, p.status, kPacketPending);
     if (p.event) st(c, p.event + 4, 0);
     const uint32_t id = d.next_packet++;
@@ -1016,19 +1036,34 @@ void stream_flush_ex(rt::Context& c) {
 
 // HRESULT Pause(DWORD dwPause): 0 resumes, 1 pauses. 3, as the original's
 // voice code (0x1CB290) does it: resume now if the voice is running, else
-// when it starts (its first packet). 2 sets another of the voice's flags,
-// not modelled yet.
+// when it starts (its first packet). 2 pauses until SynchPlayback starts
+// every voice so paused at once: in this build (CMcpxStream_Pause,
+// 0x1A97D6) it sets the voice's other pause flag (0x40 in place of 0x04),
+// counting its channels against a hardware limit of 29 (0x1A846D), which
+// the software mixer doesn't have; 0, 1 and 3 clear it.
 void stream_pause(rt::Context& c) {
     Lock lock_(ds().m);
     const char* fn = "CDirectSoundStream_Pause";
     catch_up(c);
     Buffer& b = stream(c, arg(c, 0), fn);
     const uint32_t how = arg(c, 1);
-    if (how == 2 || how > 3) unmodelled(fn, strf("pause mode %u", how));
+    if (how > 3) unmodelled(fn, strf("pause mode %u", how));
     b.resume_on_start = false;
+    b.synch_paused = how == 2;
     if (how == 3 && !b.voice.playing()) b.resume_on_start = true;
-    else b.voice.pause(how == 1);
+    else b.voice.pause(how == 1 || how == 2);
     ret(c, kDsOk, 8);
+}
+
+// HRESULT IDirectSound_SynchPlayback(LPDIRECTSOUND): every voice paused with
+// Pause(2) starts, all in the same mix (CMcpxAPU_SynchPlayback, 0x1A84A5,
+// clears their flag 0x40 together).
+void synch_playback(rt::Context& c) {
+    Lock lock_(ds().m);
+    catch_up(c);
+    for (auto& [a, b] : ds().buffers)
+        if (b->synch_paused) b->synch_paused = false, b->voice.pause(false);
+    ret(c, kDsOk, 4);
 }
 
 // HRESULT GetVoiceProperties(LPDSVOICEPROPS): what the APU's voice holds, as
@@ -1208,6 +1243,9 @@ constexpr DsFn kDs[] = {
     {"IDirectSoundBuffer_Lock", lock_buffer},
     {"IDirectSoundBuffer_Unlock", unlock_buffer},
     {"IDirectSound_CreateSoundStream", create_sound_stream},
+    {"DirectSoundCreateStream", direct_sound_create_stream},
+    {"IDirectSound_SynchPlayback", synch_playback},
+    {"CDirectSound_SynchPlayback", synch_playback},
     {"CDirectSoundStream_AddRef", stream_add_ref},
     {"CDirectSoundStream_Release", stream_release},
     {"CDirectSoundStream_GetStatus__r2", stream_get_status},

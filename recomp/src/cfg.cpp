@@ -170,6 +170,7 @@ struct Cfg::Explored {
     std::set<uint32_t> leaders, calls, tails;
     std::vector<IndirectSite> icalls, ijmps;
     std::vector<JumpTable> jtabs;
+    std::vector<RegisterJump> rjmps;
     std::vector<uint32_t> bad, overlap;
     std::set<uint32_t> imms;
 };
@@ -371,6 +372,12 @@ Cfg::Explored Cfg::explore_once(uint32_t f, uint32_t bound, const std::map<uint3
     const XbeSection* sec_f = xbe_.code_section_at(f);
     std::vector<const Insn*> hist;
     auto inside = [&](uint32_t t) { return !bound || (t >= f && t < bound); };
+    // Registers loaded with addresses of this function's own code, and the
+    // jumps through a register (RegisterJump): such a jump's targets are
+    // explored once the rest is, until no new label turns up.
+    std::map<ZydisRegister, std::set<uint32_t>> labels;
+    std::vector<std::pair<uint32_t, ZydisRegister>> reg_jumps;
+    for (bool more = true; more;) {
     while (!work.empty()) {
         uint32_t a = work.back();
         work.pop_back();
@@ -427,11 +434,18 @@ Cfg::Explored Cfg::explore_once(uint32_t f, uint32_t bound, const std::map<uint3
                             work.push_back(x);
                         }
                         r.jtabs.push_back(std::move(j));
+                    } else if (m.kind == Operand::Kind::Reg && is_gpr32(m.reg)) {
+                        reg_jumps.emplace_back(a, m.reg);
                     } else {
                         r.ijmps.push_back({a, dec_.format(*ins)});
                     }
                 }
                 break;
+            }
+            if (ins->mnem == ZYDIS_MNEMONIC_MOV && ins->nops >= 2 && ins->op[0].kind == Operand::Kind::Reg && is_gpr32(ins->op[0].reg) &&
+                ins->op[1].kind == Operand::Kind::Imm) {
+                const uint32_t v = uint32_t(ins->op[1].imm);
+                if (v > f && inside(v) && xbe_.code_section_at(v) == sec_f && !known_.contains(v)) labels[ins->op[0].reg].insert(v);
             }
             if (ins->is_cond_branch()) {
                 if (auto t = ins->rel_target()) {
@@ -454,6 +468,23 @@ Cfg::Explored Cfg::explore_once(uint32_t f, uint32_t bound, const std::map<uint3
             }
             a = ins->end();
         }
+    }
+    more = false;
+    for (const auto& [at, reg] : reg_jumps)
+        for (uint32_t l : labels[reg])
+            if (!r.leaders.contains(l)) {
+                r.leaders.insert(l);
+                work.push_back(l);
+                more = true;
+            }
+    }
+    for (const auto& [at, reg] : reg_jumps) {
+        const auto& ls = labels[reg];
+        if (ls.empty()) {
+            r.ijmps.push_back({at, dec_.format(*r.insns.at(at))});
+            continue;
+        }
+        r.rjmps.push_back({at, reg, {ls.begin(), ls.end()}});
     }
     return r;
 }
@@ -587,6 +618,7 @@ Function Cfg::make_function(uint32_t f, Origin origin, uint8_t round, Explored& 
     fn.icalls = std::move(r.icalls);
     fn.ijmps = std::move(r.ijmps);
     fn.jtabs = std::move(r.jtabs);
+    fn.rjmps = std::move(r.rjmps);
     fn.bad = std::move(r.bad);
     fn.overlap = std::move(r.overlap);
     return fn;
@@ -757,7 +789,15 @@ bool Cfg::imm_round() {
     // code, each after the one before it).
     for (std::vector<uint32_t> ok;; ok.clear()) {
     for (uint32_t v : imm_seeds_) {
-        if (owned_.contains(v) || funcs_.contains(v) || !xbe_.mapped(v - 1)) continue;
+        if (owned_.contains(v) || funcs_.contains(v)) continue;
+        // The first byte of a code section (a library's own section starts
+        // with a function) has nothing before it to judge by.
+        const XbeSection* sec_v = xbe_.code_section_at(v);
+        if (sec_v && sec_v->va == v) {
+            if (entry_ok(v)) ok.push_back(v);
+            continue;
+        }
+        if (!xbe_.mapped(v - 1)) continue;
         const uint8_t prev = xbe_.u8(v - 1);
         // After padding/ret anywhere; in the aligned regions an aligned,
         // clean entry is evidence enough (the byte before may be a table).

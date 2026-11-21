@@ -571,6 +571,11 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
             line("}");
             return;
         }
+        case ZYDIS_MNEMONIC_BSWAP: {  // flags unchanged
+            if (width(i, d) != 32) unsupported(i, "16-bit bswap (undefined)");
+            line(write(i, d, 32, std::format("std::byteswap(uint32_t({}))", read(i, d, 32))));
+            return;
+        }
         case ZYDIS_MNEMONIC_INC: case ZYDIS_MNEMONIC_DEC: case ZYDIS_MNEMONIC_NEG: case ZYDIS_MNEMONIC_NOT: {
             const int w = width(i, d);
             const uint32_t sg = sign_of(w);
@@ -775,6 +780,16 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
                 if (idx_.contains(*t)) line(std::format("{}goto L_{:08X};", tick(i, *t), *t));
                 else line(std::format("QILIN_TAIL(); writeback(); {}{}(c); return;  // tail call",
                                       flags_in(*t) ? pack_flags(flags_in(*t)) + " " : std::string(), Lifter::name(*t)));
+                return;
+            }
+            if (const auto rj = std::ranges::find(f_.rjmps, i.addr, &RegisterJump::at); rj != f_.rjmps.end()) {
+                // A subroutine's return through a register (RegisterJump).
+                use(gpr(rj->reg)->gpr);
+                if (std::ranges::any_of(rj->targets, [&](uint32_t x) { return x <= i.addr; })) line("QILIN_TICK();");
+                line(std::format("switch ({}) {{", gpr(rj->reg)->name()));
+                for (const uint32_t x : rj->targets) line(std::format("    case 0x{:X}u: goto L_{:08X};", x, x));
+                line(std::format("    default: rt::trap(0x{:X}u, \"a jump through a register to none of its function's labels\");", i.addr));
+                line("}");
                 return;
             }
             const auto jt = std::ranges::find(f_.jtabs, i.addr, &JumpTable::at);
@@ -1015,6 +1030,11 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
         case ZYDIS_MNEMONIC_PADDD: case ZYDIS_MNEMONIC_PSUBD: case ZYDIS_MNEMONIC_PSUBW: case ZYDIS_MNEMONIC_PSUBSW:
         case ZYDIS_MNEMONIC_PACKSSDW: case ZYDIS_MNEMONIC_PACKSSWB: case ZYDIS_MNEMONIC_PACKUSWB: case ZYDIS_MNEMONIC_PMADDWD:
         case ZYDIS_MNEMONIC_PADDB: case ZYDIS_MNEMONIC_PSUBB:
+        case ZYDIS_MNEMONIC_PCMPEQB: case ZYDIS_MNEMONIC_PCMPEQW: case ZYDIS_MNEMONIC_PCMPEQD:
+        case ZYDIS_MNEMONIC_PCMPGTB: case ZYDIS_MNEMONIC_PCMPGTW: case ZYDIS_MNEMONIC_PCMPGTD:
+        case ZYDIS_MNEMONIC_PAVGB: case ZYDIS_MNEMONIC_PAVGW: case ZYDIS_MNEMONIC_PMINUB: case ZYDIS_MNEMONIC_PMAXUB:
+        case ZYDIS_MNEMONIC_PMINSW: case ZYDIS_MNEMONIC_PMAXSW: case ZYDIS_MNEMONIC_PADDUSB: case ZYDIS_MNEMONIC_PSUBUSB:
+        case ZYDIS_MNEMONIC_PADDUSW: case ZYDIS_MNEMONIC_PADDSB: case ZYDIS_MNEMONIC_PSUBSB: case ZYDIS_MNEMONIC_PMULHUW:
         case ZYDIS_MNEMONIC_PUNPCKLBW: case ZYDIS_MNEMONIC_PUNPCKHBW: case ZYDIS_MNEMONIC_PUNPCKLDQ: case ZYDIS_MNEMONIC_PUNPCKHDQ: {
             const bool dm = d.kind == Operand::Kind::Reg && mm_index(d.reg) >= 0;
             const bool sm = s.kind == Operand::Kind::Reg && mm_index(s.reg) >= 0;
@@ -1065,6 +1085,24 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
                 case ZYDIS_MNEMONIC_PACKUSWB: e = std::format("rt::mmx::packuswb({}, {})", a, src); break;
                 case ZYDIS_MNEMONIC_PMADDWD: e = std::format("rt::mmx::pmaddwd({}, {})", a, src); break;
                 case ZYDIS_MNEMONIC_PSRAD: e = std::format("rt::mmx::sar<int32_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPEQB: e = std::format("rt::mmx::cmpeq<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPEQW: e = std::format("rt::mmx::cmpeq<uint16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPEQD: e = std::format("rt::mmx::cmpeq<uint32_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPGTB: e = std::format("rt::mmx::cmpgt<int8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPGTW: e = std::format("rt::mmx::cmpgt<int16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PCMPGTD: e = std::format("rt::mmx::cmpgt<int32_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PAVGB: e = std::format("rt::mmx::avg<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PAVGW: e = std::format("rt::mmx::avg<uint16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PMINUB: e = std::format("rt::mmx::min<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PMAXUB: e = std::format("rt::mmx::max<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PMINSW: e = std::format("rt::mmx::min<int16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PMAXSW: e = std::format("rt::mmx::max<int16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PADDUSB: e = std::format("rt::mmx::addsat<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PADDUSW: e = std::format("rt::mmx::addsat<uint16_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PADDSB: e = std::format("rt::mmx::addsat<int8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PSUBUSB: e = std::format("rt::mmx::subsat<uint8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PSUBSB: e = std::format("rt::mmx::subsat<int8_t>({}, {})", a, src); break;
+                case ZYDIS_MNEMONIC_PMULHUW: e = std::format("rt::mmx::pmulhuw({}, {})", a, src); break;
                 case ZYDIS_MNEMONIC_PUNPCKLBW: e = std::format("rt::mmx::unpack<uint8_t>({}, {}, false)", a, src); break;
                 case ZYDIS_MNEMONIC_PUNPCKHBW: e = std::format("rt::mmx::unpack<uint8_t>({}, {}, true)", a, src); break;
                 case ZYDIS_MNEMONIC_PUNPCKLDQ: e = std::format("rt::mmx::unpack<uint32_t>({}, {}, false)", a, src); break;
@@ -1631,6 +1669,8 @@ std::string FnEmitter::run() {
                 if (idx_.contains(*t)) succ[k].push_back(idx_.at(*t));  // else a tail call: an exit
             } else if (auto jt = std::ranges::find(f_.jtabs, i.addr, &JumpTable::at); jt != f_.jtabs.end()) {
                 for (const uint32_t x : jt->targets) succ[k].push_back(need_idx(i, x));
+            } else if (auto rj = std::ranges::find(f_.rjmps, i.addr, &RegisterJump::at); rj != f_.rjmps.end()) {
+                for (const uint32_t x : rj->targets) succ[k].push_back(need_idx(i, x));
             }
             continue;
         }

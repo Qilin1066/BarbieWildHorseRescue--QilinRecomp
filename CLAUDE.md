@@ -71,14 +71,14 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 ## Status (v0.7.0)
 
 - The tools build and their tests pass under GCC 14 and Clang (zig) locally and in CI. The whole game lifts, compiles and starts (v0.5.0); nothing of it has been checked against the original x86 yet.
-- Since v0.7.0 (unreleased): Direct3D natively, with the window and settings menu; the game shows its legal notice and logos for 20 seconds and stops at the intro movie (XMV). To run it locally: the disc's `Packages/` and `Video/` beside `default.xbe` (staged from the owner's PC, never committed), `qilin_run --headless --dump-frames DIR <folder>`.
+- Since v0.7.0 (unreleased): Direct3D natively, with the window and settings menu; the game shows its legal notice and logos and plays the intro movie (XMV lifted whole, through the video overlay), with sound, then stops at `SetPalette` as the front end starts. To run it locally: the disc's `Packages/` and `Video/` beside `default.xbe` (staged from the owner's PC, never committed), `qilin_run --headless --dump-frames DIR <folder>`.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
 - v0.2.0: the renderer, audio engine, platform layer and settings menu are in, with their tests; `qilin_menu_preview` shows the menu over a test card (seen working under Xvfb on Mesa's software driver). Nothing drives them from a game yet.
 - Unchecked: the lifted code against the original (no differential test yet); the decoder against LLVM; the disc reader on a real image; the PowerShell script (never run).
 
 ## Next steps, in order
 
-1. XMV, the next stop (`0x1DAE6D`, called from `0x114BC1`, about 20 seconds in, after the logos): 6 unnamed functions, decide lift or replace, with the overlay (`UpdateOverlay`, `EnableOverlay`, `GetOverlayUpdateStatus`). Then the rest of Direct3D the game calls: **read `docs/graphics.md` first** (lighting in the fixed-function program, palettes, `SetShaderConstantMode`, `PersistDisplay`). Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
+1. The front end: the next stop is `D3DDevice_SetPalette` (`0x168350`, from `0x0F4D14`), after the intro movie. Then the rest of Direct3D the game calls: **read `docs/graphics.md` first** (palettes, lighting in the fixed-function program, `SetShaderConstantMode`, `PersistDisplay`). Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
 2. DirectSound's 3D: lift the library's own 3D calculator as GBTGhoulies does (`kLiftedDsound` in its `recomp/src/main.cpp`), found here by name, and feed its results to the voices; until then 3D sounds are unpositioned. Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. `XMountMUA`/`XUnmountMU`.
 4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.

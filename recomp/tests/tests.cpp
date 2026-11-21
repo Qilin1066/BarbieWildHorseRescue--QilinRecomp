@@ -316,6 +316,25 @@ Xiso::ReadFn reader(const std::vector<uint8_t>& img, uint64_t partition = 0) {
     };
 }
 
+// The MMX lane helpers the lifter emits (rt::mmx), against values worked by hand.
+void test_mmx() {
+    using namespace qilin::rt::mmx;
+    const uint64_t a = 0x7F80FF0001FE8000ull, b = 0x7F7F01000180FF7Full;
+    CHECK(cmpeq<uint8_t>(a, b) == 0xFF0000FFFF000000ull);
+    CHECK(cmpeq<uint16_t>(a, b) == 0);
+    CHECK(cmpgt<int8_t>(a, b) == 0x0000000000FF0000ull);  // signed: only 0xFE (-2) > 0x80 (-128)
+    CHECK(cmpgt<int16_t>(0x0001FFFF80007FFFull, 0x00008000FFFF7FFEull) == 0xFFFFFFFF0000FFFFull);
+    CHECK(avg<uint8_t>(0x00FF0102ull, 0x00FF0203ull) == 0x00FF0203ull);  // (x + y + 1) >> 1
+    CHECK(avg<uint16_t>(0xFFFFull, 0xFFFEull) == 0xFFFFull);
+    CHECK(min<uint8_t>(0x80017F00ull, 0x7F028001ull) == 0x7F017F00ull);
+    CHECK(max<int16_t>(0x8000000100000000ull, 0x7FFFFFFF0000FFFFull) == 0x7FFF000100000000ull);
+    CHECK(addsat<uint8_t>(0xF0010000ull, 0x20020000ull) == 0xFF030000ull);
+    CHECK(addsat<int8_t>(0x7F80ull, 0x01FFull) == 0x7F80ull);
+    CHECK(subsat<uint8_t>(0x10200000ull, 0x20100000ull) == 0x00100000ull);
+    CHECK(subsat<int8_t>(0x807Full, 0x01FFull) == 0x807Full);
+    CHECK(pmulhuw(0xFFFF0002ull, 0xFFFF8000ull) == 0xFFFE0001ull);
+}
+
 void test_xiso() {
     for (uint64_t partition : {uint64_t(0), uint64_t(0x18300000)}) {
         const std::vector<uint8_t> img = make_disc();
@@ -890,6 +909,7 @@ int main(int argc, char** argv) {
 
     // ---------------------------------------------------------------- disc image
     test_xiso();
+    test_mmx();
 
     if (failures) {
         std::println(stderr, "{} check(s) failed", failures);

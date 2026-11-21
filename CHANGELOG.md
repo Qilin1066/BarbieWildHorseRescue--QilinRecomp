@@ -5,10 +5,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 ## [Unreleased]
 
 ### Added
-- **Direct3D natively** (`recomp/runtime/host/d3d.cpp`, from GBTGhoulies--QilinRecomp v0.41.3) over the Vulkan renderer, with the window, controllers through it and the settings menu wired into `qilin_run` (`--headless`, `--fullscreen`, `--dump-frames`, `--frames`, `--gpu`). The game draws its start-up screens: the legal notice and the three publishers' and developer's logos, for about 20 seconds, until the intro movie.
+- **Direct3D natively** (`recomp/runtime/host/d3d.cpp`, from GBTGhoulies--QilinRecomp v0.41.3) over the Vulkan renderer, with the window, controllers through it and the settings menu wired into `qilin_run` (`--headless`, `--fullscreen`, `--dump-frames`, `--frames`, `--gpu`). The game draws its start-up screens: the legal notice and the three publishers' and developer's logos, then the intro movie.
 - Every address the layer took from the sister build and that hasn't been found in this one stops the runtime if reached, naming it; replacements are registered by name, each one's argument size checked against this build's code (`xdk_ret_bytes.inc`, `tools/gen/xdk_ret_bytes.py`).
 - Direct3D's resource code (textures, surfaces, locks, descriptions), its default state, its shader-object builders, its material and light state and their helpers, lifted: about 40 functions found in this build.
 - What this game needs that the sister game didn't: `Swap` with `D3DSWAP_COPY` and this XDK's default flags; fixed-function texture transforms; normals in unlit draws; a stage reading a texture with none set.
+- **The intro movie plays**: Microsoft's XMV decoder (the XMV section) is lifted whole, reading the disc through XAPI, decoding into Direct3D surfaces and playing its sound through a DirectSound stream; its pictures reach the screen through the video overlay (`UpdateOverlay`, `EnableOverlay`, `GetOverlayUpdateStatus`: YUY2 to RGB, scaled, colour-keyed), its timing through `GetDisplayFieldStatus` and `GetDisplayMode`.
+- The lifter: the MMX comparisons, averages, minimum and maximum, saturating additions and subtractions and `pmulhuw`, and `bswap`, with unit tests. The CFG: a jump through a register the function loads only with its own labels (hand-written code's local subroutines, `mov ebx, label; jmp sub` … `jmp ebx`) becomes a switch over those labels; a function at the first byte of a code section can be found by an immediate pointer to it.
+- DirectSound: `DirectSoundCreateStream`, this build's stream vtables, `Pause(2)` and `SynchPlayback` (streams started together).
 - User-mode APCs: `NtQueueApcThread`, delivered when a thread waits alertably in user mode (the engine's loader thread runs on them); reads and writes with an event or a completion routine; XAPI's `NtUserIoApcDispatcher`; `MmSetAddressProtect`.
 - `docs/graphics.md`: what bringing the sister project's Direct3D layer to this XDK build has established (the device object's layout is the same, the state tables moved together, the functions are in another order and not all identical), the helpers identified so far, and the plan.
 
@@ -16,7 +19,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 - Direct3D's object creation (`0x174900`) and its two capability queries (`D3D_GetDeviceCaps`, `D3DDevice_GetDeviceCaps`) are lifted: pure functions.
 
 ### Not yet
-- The intro movies (XMV): the run stops there. Lighting, palettes and the overlay are still to come; the frame rate and picture shape settings have no effect until the engine's frame clock and projection are found.
+- The run stops after the intro movie, at `SetPalette`, as the front end starts. Lighting and palettes are still to come; the frame rate and picture shape settings have no effect until the engine's frame clock and projection are found.
 
 ## [0.7.0] - 2026-11-21
 

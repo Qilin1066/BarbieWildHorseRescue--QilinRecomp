@@ -32,6 +32,16 @@ namespace qilin {
 
 struct IndexFact;  // vrange.hpp
 
+// An indirect jump through a register the function loads only with its own
+// labels: `mov ebx, label; jmp sub` … `sub: … jmp ebx`, a subroutine inside
+// a hand-written function that returns through a register. Its targets are
+// every such label (a value it isn't is a trap in the lifted code).
+struct RegisterJump {
+    uint32_t at = 0;
+    ZydisRegister reg = ZYDIS_REGISTER_NONE;
+    std::vector<uint32_t> targets;  // sorted
+};
+
 struct JumpTable {
     uint32_t at = 0;                // the jmp [4*reg + table]
     uint32_t table = 0;             // table address
@@ -69,6 +79,7 @@ struct Function {
     std::vector<IndirectSite> icalls;
     std::vector<IndirectSite> ijmps; // unresolved indirect jumps
     std::vector<JumpTable> jtabs;
+    std::vector<RegisterJump> rjmps;
     std::vector<uint32_t> bad;       // addresses that failed to decode / left the section
     std::vector<uint32_t> overlap;   // instructions overlapping an earlier one
     uint32_t bytes = 0;
