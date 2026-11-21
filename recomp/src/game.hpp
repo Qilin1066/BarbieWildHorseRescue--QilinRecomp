@@ -52,6 +52,8 @@ inline const std::vector<uint32_t> kLiftedLibraryFunctions = {
     // library's own data (docs/code-analysis.md).
     0x2040BD, 0x20B291, 0x20B2C1,            // XPP: its device-type tables and two static objects
     0x1A7153, 0x1A715E, 0x1AA01C, 0x1AA027,  // DirectSound: pointers to four static objects
+    // Direct3D functions that are pure computation.
+    0x174900,  // mov eax, 1; ret 4: the library's object creation (the engine keeps the 1 as its "Direct3D object")
 };
 // Entry points the runtime calls itself.
 inline const std::vector<uint32_t> kStartupRoots = {};

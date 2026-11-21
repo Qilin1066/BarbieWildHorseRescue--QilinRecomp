@@ -2,6 +2,11 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [Unreleased]
+
+### Changed
+- Direct3D's object creation (`0x174900`, `mov eax, 1; ret 4`) is lifted; the run's next stop is `D3D_GetDeviceCaps`, from the engine's display start-up.
+
 ## [0.7.0] - 2026-11-21
 
 DirectSound: the engine's sound system starts on the native mixer, and the run reaches Direct3D.
