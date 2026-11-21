@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -25,7 +26,9 @@ inline constexpr std::string_view kTitle = "Barbie Horse Adventures: Wild Horse 
 // SHA-256 of the supported default.xbe (USA), lower-case hex. Empty: not
 // recorded yet. `qilin info` prints a file's; once recorded, every command
 // refuses another build unless given --any-build.
-inline constexpr std::string_view kSha256 = "";
+// (Not constexpr: code that asks whether it is recorded must not be a
+// constant condition to the compiler.)
+inline const std::string kSha256 = "";
 
 struct Range {
     uint32_t lo, hi;
