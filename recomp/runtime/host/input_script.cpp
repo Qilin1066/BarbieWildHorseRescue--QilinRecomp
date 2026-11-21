@@ -17,6 +17,7 @@ struct Press {
     uint64_t from = 0, until = 0;
     uint16_t buttons = 0;
     uint8_t analog = 0;  // bit n: analog button n fully pressed
+    int16_t thumbs[4] = {};  // full deflections: left x, y, right x, y (y positive up)
 };
 std::vector<Press> g_script;
 
@@ -32,6 +33,8 @@ platform::PadState with_script(uint32_t port, platform::PadState s) {
             s.buttons |= p.buttons;
             for (uint32_t i = 0; i < 8; ++i)
                 if (p.analog & (1u << i)) s.analog[i] = 255;
+            for (uint32_t i = 0; i < 4; ++i)
+                if (p.thumbs[i]) s.thumbs[i] = p.thumbs[i];
         }
     return s;
 }
@@ -43,11 +46,15 @@ bool set_input_script(std::string_view script, std::string* why) {
         std::string_view name;
         uint16_t button;
         int analog;
+        int thumb = -1;     // the axis (left x, y, right x, y)
+        int16_t value = 0;  // and its deflection
     };
     static constexpr Name kNames[] = {
         {"a", 0, 0}, {"b", 0, 1}, {"x", 0, 2}, {"y", 0, 3}, {"black", 0, 4}, {"white", 0, 5}, {"lt", 0, 6}, {"rt", 0, 7},
         {"up", 0x1, -1}, {"down", 0x2, -1}, {"left", 0x4, -1}, {"right", 0x8, -1}, {"start", 0x10, -1}, {"back", 0x20, -1},
         {"ls", 0x40, -1}, {"rs", 0x80, -1},
+        {"ll", 0, -1, 0, -32768}, {"lr", 0, -1, 0, 32767}, {"ld", 0, -1, 1, -32768}, {"lu", 0, -1, 1, 32767},
+        {"rl", 0, -1, 2, -32768}, {"rr", 0, -1, 2, 32767}, {"rd", 0, -1, 3, -32768}, {"ru", 0, -1, 3, 32767},
     };
     const auto number = [](std::string_view t, uint64_t& v) {
         const auto r = std::from_chars(t.data(), t.data() + t.size(), v);
@@ -77,9 +84,10 @@ bool set_input_script(std::string_view script, std::string* why) {
                 return false;
             }
             if (it->analog >= 0) p.analog |= uint8_t(1u << it->analog);
+            if (it->thumb >= 0) p.thumbs[it->thumb] = it->value;
             p.buttons |= it->button;
         }
-        if (!p.buttons && !p.analog) {
+        if (!p.buttons && !p.analog && !p.thumbs[0] && !p.thumbs[1] && !p.thumbs[2] && !p.thumbs[3]) {
             *why = strf("\"%.*s\" presses nothing", int(item.size()), item.data());
             return false;
         }

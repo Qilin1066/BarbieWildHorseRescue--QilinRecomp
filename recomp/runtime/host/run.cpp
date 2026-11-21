@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
                      "  --fullscreen     start full screen\n"
                      "  --dump-frames DIR  write each frame shown there as frame_NNNNN.png\n"
                      "  --frames N       stop after N frames\n"
-                     "  --press SCRIPT   controller presses on port 1 by frame: FRAME:BUTTONS[/FRAMES],... (e.g. 2100:start/8)\n"
+                     "  --press SCRIPT   controller presses on port 1 by frame: FRAME:BUTTONS[/FRAMES],... (e.g. 2100:start/8,2400:lu/60)\n"
                      "  --gpu N          the Vulkan device to draw with, by index (default: the best)\n"
                      "  --any-build      run an executable that is not the supported build\n",
                      host::kRetailRamMb, platform::default_data_folder().string().c_str());

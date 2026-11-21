@@ -202,7 +202,8 @@ void register_xinput(platform::Input* input);
 // Scripted controller presses (qilin_run --press), on port 1 over whatever
 // a real controller there does: comma-separated FRAME:BUTTONS[/FRAMES],
 // BUTTONS one or more of a b x y black white lt rt up down left right
-// start back ls rs joined by +, held from frame FRAME (counted as frames
+// start back ls rs, or a thumbstick pushed fully (lu ld ll lr, ru rd rl
+// rr), joined by +, held from frame FRAME (counted as frames
 // are shown) for FRAMES (default 6). False, with why, if it doesn't parse.
 bool set_input_script(std::string_view script, std::string* why);
 // Port `port`'s state with the script's presses for the frame now shown

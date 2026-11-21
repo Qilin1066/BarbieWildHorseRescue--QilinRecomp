@@ -99,7 +99,7 @@ int main() {
     // qilin_run --press: scripted controller presses.
     {
         std::string why;
-        CHECK(host::set_input_script("2300:start/10,2700:a+up,10:rt/1", &why));
+        CHECK(host::set_input_script("2300:start/10,2700:a+up,10:rt/1,20:lu+rl/30", &why));
         CHECK(!host::set_input_script("2300:jump", &why) && why.find("jump") != std::string::npos);
         CHECK(!host::set_input_script("start", &why));
         CHECK(!host::set_input_script("5:a/0", &why));
