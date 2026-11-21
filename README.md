@@ -8,7 +8,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs XAPI's and the C runtime's start-up, the game's `main` and the engine's own start-up (heap, background loader, input) until it asks for DirectSound, where the runtime stops and names it (v0.6.0). The controller library is replaced natively; DirectSound, Direct3D and the XMV player are the work ahead (`docs/code-analysis.md` lists the 83 functions the game calls in them). The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
+**It doesn't play the game yet, but the game's own code now starts.** All 6,621 functions the game needs lift to C++ (v0.5.0), the result compiles, and `qilin_run` runs it: XAPI's entry point creates the game's main thread over the native kernel, and that thread runs XAPI's and the C runtime's start-up, the game's `main` and the engine's own start-up (heap, background loader, input, sound) until its display start-up makes its first Direct3D call, where the runtime stops and names it (v0.7.0). The controller library and DirectSound are replaced natively (3D sound positioning is not applied yet); Direct3D and the XMV player are the work ahead (`docs/code-analysis.md` lists the functions the game calls in them). The lifted code has not yet been checked against the original instruction by instruction (the differential test). The recompiler core and the console-level runtime come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
@@ -23,7 +23,8 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
 | Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it and runs into its engine (v0.6.0); three test programs go from XBE through the lifter to native programs and run in CI |
 | The controller library | ✅ natively, found by name in this XDK build (no window yet, so no controller is plugged in) |
-| DirectSound, Direct3D, the XMV player | to do: 27, 48 and 6 functions the game calls, named |
+| DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; 3D positioning recorded but not applied; not yet heard |
+| Direct3D, the XMV player | to do: 48 and 6 functions the game calls |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
 
 ## Versions and changes

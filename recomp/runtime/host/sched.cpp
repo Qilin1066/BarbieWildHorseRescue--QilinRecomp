@@ -964,6 +964,11 @@ bool cancel_timer(rt::Context& c, uint32_t t) {
     return was;
 }
 
+uint32_t handle_object(uint32_t h) {
+    std::lock_guard lk(s().mu);
+    auto it = s().handles.find(h);
+    return it == s().handles.end() ? 0 : it->second;
+}
 bool close_handle(uint32_t h) {
     std::lock_guard lk(s().mu);
     return s().handles.erase(h) != 0;

@@ -2,6 +2,19 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.7.0] - 2026-11-21
+
+DirectSound: the engine's sound system starts on the native mixer, and the run reaches Direct3D.
+
+### Added
+- DirectSound natively (`recomp/runtime/host/dsound.cpp`, from GBTGhoulies--QilinRecomp v0.41.3) over the audio engine, its functions found by name in this XDK build, each one's argument size checked against this build's code. `qilin_run` gains `--mute`, `--dump-audio` and `--audio-channels`.
+- What this game uses that the sister game didn't: play-cursor notifications (`SetNotificationPositions`: events signalled as the cursor passes each offset, or when the buffer stops), `GetCaps`, `GetSpeakerConfig`, `DirectSoundUseFullHRTF`, and DirectSound's own 3D calls (`SetPosition`, `SetVelocity`, `SetMinDistance`, `SetMaxDistance`, `SetRolloffCurve`, the listener's `SetAllParameters`).
+
+### Not yet
+- **3D positioning is recorded, not applied:** 3D sounds will play unpositioned (the runtime says so once). The sister project lifts the library's own 3D calculator; the same is to do here.
+- Nothing has been heard: the run stops in the engine's display start-up, before any sound plays. The notification code is untested against the game.
+- `IDirectSound_DownloadEffectsImage` gives a null effect description, which this game asks for and never reads.
+
 ## [0.6.0] - 2026-11-21
 
 The game runs through start-up into its engine, up to the sound system: the stop is now `DirectSoundCreate`, by name.

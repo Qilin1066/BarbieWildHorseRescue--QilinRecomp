@@ -82,18 +82,19 @@ The game draws through a small part of Direct3D: no index buffers, no `DrawIndex
 The C runtime's start-up runs three tables of initializers (`0x231860`, `0x231870`, `0x2318AC`). Seven entries belong to libraries that are replaced, and each only stores into its library's own data: three of the controller library's (`0x2040BD`, `0x20B291`, `0x20B2C1`) and four of DirectSound's (`0x1A7153`, `0x1A715E`, `0x1AA01C`, `0x1AA027`). They are lifted (`game::kLiftedLibraryFunctions`), so start-up runs its tables as on the console.
 
 ## The run so far
-The lifted game compiles (34 generated files; about six minutes with GCC 14 at `-O2` on two cores) and starts. With v0.6.0:
+The lifted game compiles (34 generated files; about six minutes with GCC 14 at `-O2` on two cores) and starts. With v0.7.0:
 
 ```
-qilin_run: 64 MB of guest RAM, 93 replacements registered; calling the entry point at 000EA60F
 qilin_run: thread 2 started (000EA59B, priority 8)
 qilin_run: the entry point returned 1
 qilin_run: thread 3 started (00118460, priority 8)
-qilin: stopped at 001A6E77: no replacement for DSOUND DirectSoundCreate (001A6E77), called from 00119C8B
+qilin_run: DirectSound: 48000 Hz software mix on its own thread, to stereo
+qilin_run: DirectSound: effects image of 24824 bytes (I3DL2 reverb at effect 0, crosstalk at 1), run natively
+qilin: stopped at 00174900: no replacement for D3D code at 00174900, called from 000F1995
 ```
 
-XAPI's entry point creates the title's main thread and returns. The main thread runs XAPI's and the C runtime's start-up (initializer tables, heap, time zone, drive letters), enters the game's `main` and the engine's start-up: its heap, its background loader's thread (thread 3), its input (the controller library, natively), a write test on the disc that fails as it should, and then its sound start-up (`bInitSpecificWave`), where it asks for DirectSound and is stopped by name.
+XAPI's entry point creates the title's main thread and returns. The main thread runs XAPI's and the C runtime's start-up (initializer tables, heap, time zone, drive letters), enters the game's `main` and the engine's start-up: its heap, its background loader's thread (thread 3), its input (the controller library, natively), a write test on the disc that fails as it should, its sound start-up (`bInitSpecificWave`: DirectSound created, the effects image downloaded, the listener set), and then its display start-up (`0x0F1970`), whose first Direct3D call stops it. That call, `0x174900`, is `mov eax, 1; ret 4`: the library's object creation (it returns the constant the XDK uses for the one Direct3D object), a pure function to lift.
 
-What each earlier stop needed, in order: the replaced libraries' static initializers lifted; the settings' whole user section (`ExQueryNonVolatileSetting` index `0xFF`, read by `GetTimeZoneInformation`); `RtlTimeToTimeFields`; named events and mutants; the controller library; the Win32 error for a write-protected volume.
+What each stop needed, in order: the replaced libraries' static initializers lifted; the settings' whole user section (`ExQueryNonVolatileSetting` index `0xFF`, read by `GetTimeZoneInformation`); `RtlTimeToTimeFields`; named events and mutants; the controller library; the Win32 error for a write-protected volume; DirectSound.
 
 The differential test (lifted code against the original x86) has not run yet, so "lifts" and "runs this far" are not yet "computes the same".

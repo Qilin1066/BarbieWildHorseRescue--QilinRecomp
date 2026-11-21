@@ -47,7 +47,8 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - The supported build: SHA-256 `51e6aa2a…7e4` in `build.hpp`. Since it is recorded, anything run on a synthetic or test XBE needs `--any-build` (the CMake tests pass it).
 - First results (v0.4.0): XDK 5558; no XACT, no Bink, movies are XMV; 120 kernel imports, 36 without native code (mostly the hardware libraries'); `.text` is laid out as the sister game's (aligned game code `0x11000`–about `0xE9000` and about `0xF0000`–`0x146000`, unaligned XAPI between and C runtime after, EH funclets last); 5,844 of 5,899 functions lift, the failures listed by reason in `docs/xbe-analysis.md`.
 - `qilin lift` on the whole game takes about 4 seconds; if it runs for minutes, something loops (v0.4.0 fixed one such loop).
-- To build and run the game in a cloud session: stage `default.xbe`, `qilin lift <xbe> --out <gen outside the repo>`, `cmake -B build-game -DQILIN_GEN_DIR=<gen> -DSDL_WAYLAND=OFF`, `cmake --build build-game --target qilin_run --parallel 2` (about six minutes with GCC 14), then `qilin_run --data-dir <dir> <folder holding default.xbe>`. v0.6.0's run stops at `DirectSoundCreate`. `QILIN_TRACE_HLE=1` logs every native call.
+- To build and run the game in a cloud session: stage `default.xbe`, `qilin lift <xbe> --out <gen outside the repo>`, `cmake -B build-game -DQILIN_GEN_DIR=<gen> -DSDL_WAYLAND=OFF`, `cmake --build build-game --target qilin_run --parallel 2` (about six minutes with GCC 14), then `qilin_run --data-dir <dir> <folder holding default.xbe>`. v0.7.0's run (with `--mute` where there is no sound device) stops at the first Direct3D call. `QILIN_TRACE_HLE=1` logs every native call.
+- Before registering a library function natively, check its argument bytes in this build (the `ret n` of the function at the symbol's address in a `qilin insns --linear` listing): the sister project's values are for another XDK build. v0.7.0 did this for every DirectSound function the game calls.
 - XbSymbolDatabase in a cloud session: `git clone --recurse-submodules https://github.com/Cxbx-Reloaded/XbSymbolDatabase`, check out `20eced5`, `cmake -S . -B build && cmake --build build`, then `python3 tools/gen/xdk_symbols.py <build>/projects/cli/XbSymbolDatabaseCLI <default.xbe>` (it is run, never read into this code beyond its MIT-licensed names).
 - The bring-up loop: run, read the stop, provide it, run again. A stop inside the kernel names the function and what isn't modelled; `QILIN_TRACE_HLE=1` shows the calls before it with their arguments and callers, which is how a caller is found and read (`qilin insns --linear` listing) before anything is implemented.
 - Regions, conventions and natives: `docs/code-analysis.md`. The engine is Blitz Games' "Babel" (`bk`/`bd`/`ba` functions, `xb*.cpp`); its strings name functions and files, which helps find the frame clock, the display set-up (`bdOpenDisplay`) and the XMV player (`bdVideoPlayXMVStream`).
@@ -66,7 +67,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - After editing `CMakeLists.txt`, run `cmake -S . -B build` again before building one target by name: `cmake --build --target new_target` on a stale tree says there is no such rule.
 - In the v0.2.0 session a request for access to the PC's Downloads folder was refused by the session's own permission rules, not by the owner: the owner has to connect the game's folder from the desktop app ("Add folder").
 
-## Status (v0.6.0)
+## Status (v0.7.0)
 
 - The tools build and their tests pass under GCC 14 and Clang (zig) locally and in CI. The whole game lifts, compiles and starts (v0.5.0); nothing of it has been checked against the original x86 yet.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
@@ -75,11 +76,12 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 
 ## Next steps, in order
 
-1. The stop is `DirectSoundCreate` (from the engine's `bInitSpecificWave`, `0x119C8B`). Bring GBTGhoulies' `dsound.cpp` over function by function against this XDK build (5558 here, 5659 there: check each structure offset it relies on, don't assume), registered by name through `xdk_symbol`; the 27 functions the game calls are listed in `docs/code-analysis.md`. To see past sound first, a run can register DirectSound later and Direct3D first; either way each stop names the next function.
-2. Direct3D (`d3d.cpp`, 48 functions, with the window on the first host thread: `docs/runtime.md`), then XMV (6 unnamed functions: decide lift or replace), `XMountMUA`/`XUnmountMU`.
-3. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.
-4. The 73 unresolved indirect jumps, the 9 heuristic jump tables, the last 67 unknown bytes, and the two call targets in `libs` that aren't functions (`0x14F143`, `0x15FF41`).
-5. The disc's files for runs past start-up (stage `Packages/` in batches, or run on the owner's PC); the settings menu wired in; the player kit and `Play Wild Horse Rescue.bat`.
+1. Direct3D. The stop is `0x174900` (`mov eax, 1; ret 4`, called from the engine's display start-up at `0x0F1970`: pure, lift it through `game::kLiftedLibraryFunctions`). Then bring GBTGhoulies' `d3d.cpp` over function by function against XDK 5558 (it has 152 addresses of that game: each lifted D3D helper and each device offset it relies on must be found again here, by name through `xdk_symbol` or by reading), with the window created on the first host thread (`docs/runtime.md`) and the settings menu wired in. The 48 functions the game calls are in `docs/code-analysis.md`.
+2. DirectSound's 3D: lift the library's own 3D calculator as GBTGhoulies does (`kLiftedDsound` in its `recomp/src/main.cpp`), found here by name, and feed its results to the voices; until then 3D sounds are unpositioned. Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
+3. XMV (6 unnamed functions: decide lift or replace), `XMountMUA`/`XUnmountMU`.
+4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.
+5. The 73 unresolved indirect jumps, the 9 heuristic jump tables, the last 67 unknown bytes, the two call targets in `libs` that aren't functions (`0x14F143`, `0x15FF41`).
+6. The disc's files for runs past start-up (stage `Packages/` in batches, or run on the owner's PC); the player kit and `Play Wild Horse Rescue.bat`.
 
 ## Conventions
 

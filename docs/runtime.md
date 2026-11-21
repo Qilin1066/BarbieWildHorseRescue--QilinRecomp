@@ -13,7 +13,7 @@ What runs beside the lifted code. The design is GBTGhoulies--QilinRecomp's (its 
 | `qilin_run` | `host/run.cpp` | new: see below |
 | The renderer, the audio engine, the window, input, sound output, the settings menu | `gfx/`, `audio/`, `platform/`, `ui/` | in since v0.2.0, not yet driven by a game |
 
-Since v0.6.0 the controller library is here too (`host/xinput.cpp`), and the game's own native functions (`host/game_native.cpp`), both registered only for the supported build. Not here yet, because each is written against the game's XDK build: Direct3D, DirectSound, the XMV player, the aspect and frame-clock hooks.
+Since v0.6.0 the controller library is here too (`host/xinput.cpp`), and the game's own native functions (`host/game_native.cpp`); since v0.7.0 DirectSound (`host/dsound.cpp`: the sister project's `docs/audio.md` describes the mixer's design; what differs here is in the file's opening comment and the changelog). All are registered only for the supported build. Not here yet: Direct3D, the XMV player, the aspect and frame-clock hooks.
 
 ## `qilin_run` starts at the entry point
 The sister project's `qilin_run` replaces XAPI's start-up by hand: it calls that game's process initialisation, its initializer tables and its `main` at their addresses. That was written before its scheduler existed.

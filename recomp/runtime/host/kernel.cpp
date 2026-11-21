@@ -707,6 +707,7 @@ void preload_section(rt::Context& c, uint32_t header) {
     shared_pages(c, header, +1);
 }
 
+bool audio_surround() { return g_audio_flags != 0; }
 void set_audio_surround(bool surround) { g_audio_flags = surround ? 0x00010002u : 0u; }
 void set_console_language(uint32_t language) { g_language = language; }
 void set_console_widescreen(bool widescreen) { g_widescreen = widescreen; }

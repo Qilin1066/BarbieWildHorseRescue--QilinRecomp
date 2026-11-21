@@ -48,6 +48,10 @@ bool cancel_timer(rt::Context& c, uint32_t timer);
 // critical section's event): KeWaitForSingleObject with no timeout.
 void wait_object(uint32_t object);
 
+// The kernel object a handle names (an event's KEVENT), or 0: what
+// ObReferenceObjectByHandle would give a library that keeps the object.
+uint32_t handle_object(uint32_t handle);
+
 // NtClose on a kernel object's handle: true if it was one.
 bool close_handle(uint32_t handle);
 

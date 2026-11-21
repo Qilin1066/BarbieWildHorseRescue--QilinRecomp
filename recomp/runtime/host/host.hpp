@@ -158,6 +158,7 @@ const D3dConfig& d3d_config();
 // The console's audio setting the game reads (ExQueryNonVolatileSetting):
 // surround with Dolby Digital when the output is 5.1, else stereo.
 void set_audio_surround(bool surround);
+bool audio_surround();
 // The console's language the game reads (XC_LANGUAGE: 1 English, 3 German,
 // 4 French, 5 Spanish, 6 Italian).
 void set_console_language(uint32_t language);
