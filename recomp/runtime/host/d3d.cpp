@@ -343,7 +343,7 @@ void run_vblanks(rt::Context& c, Device& d, uint32_t until, bool swap_done) {
 // the console never gave it less than 1/30 s, and the few places that
 // assumed so are fixed in game_fixes.cpp). Its ticks then run as they would:
 // whatever is done per tick happens as often as before.
-void frame_clock(rt::Context& c) {
+[[maybe_unused]] void frame_clock(rt::Context& c) {
     Device* dp = g_device;
     const rt::Mem m = mem(c);
     auto f32 = [&](uint32_t a) { return std::bit_cast<float>(rt::ld32(m, a, 0)); };
@@ -3886,7 +3886,6 @@ void register_d3d(const D3dConfig& config) {
     // (The sister game's frame clock is replaced natively at its address; this
     // game's hasn't been found, so frame_clock isn't registered and only the
     // original frame rate applies: docs/graphics.md.)
-    (void)frame_clock;
     // By name, at this build's addresses. A replacement whose function this
     // build doesn't have (or XbSymbolDatabase doesn't name in it) isn't
     // registered: a call into the library that nothing replaces stops the
