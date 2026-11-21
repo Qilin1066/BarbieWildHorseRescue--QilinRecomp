@@ -5,7 +5,10 @@ All notable changes to this project are recorded here. The format follows [Keep 
 ## [Unreleased]
 
 ### Changed
-- Direct3D's object creation (`0x174900`, `mov eax, 1; ret 4`) is lifted; the run's next stop is `D3D_GetDeviceCaps`, from the engine's display start-up.
+- Direct3D's object creation (`0x174900`) and its two capability queries (`D3D_GetDeviceCaps`, `D3DDevice_GetDeviceCaps`) are lifted: pure functions. The run's next stop is `Direct3D_CreateDevice`.
+
+### Added
+- `docs/graphics.md`: what bringing the sister project's Direct3D layer to this XDK build has established (the device object's layout is the same, the state tables moved together, the functions are in another order and not all identical), the helpers identified so far, and the plan.
 
 ## [0.7.0] - 2026-11-21
 
