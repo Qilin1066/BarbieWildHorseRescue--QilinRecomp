@@ -32,9 +32,10 @@ struct Language {
     uint32_t value;
     const char* name;
 };
-// The console's languages. Which of them the disc has is to confirm (docs/xbe-analysis.md);
-// the list is cut to those before the menu reaches a player.
-constexpr Language kLanguages[] = {{1, "English"}, {2, "Japanese"}, {3, "Deutsch"}, {4, "Fran\xc3\xa7" "ais"}, {5, "Espa\xc3\xb1ol"}, {6, "Italiano"}};
+// The console's languages the disc has string tables for (docs/xbe-analysis.md). It also
+// has Dutch and UK English tables, which no console language setting names: how the
+// game chooses among them is to confirm.
+constexpr Language kLanguages[] = {{1, "English"}, {3, "Deutsch"}, {4, "Fran\xc3\xa7" "ais"}, {5, "Espa\xc3\xb1ol"}, {6, "Italiano"}};
 
 }  // namespace
 

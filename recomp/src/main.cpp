@@ -297,13 +297,14 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
         // Jumps into the middle of a lifted function (the C runtime's shared
         // exits: `call __SEH_epilog; ret` after a __finally block that the
         // CFG split off) get a function of their own from there.
+        std::set<uint32_t> tried;  // each such entry once: one that doesn't lift is reported, not tried again
         for (bool more = true; more;) {
             more = false;
             std::ranges::sort(done);
             std::vector<uint32_t> missing;
             std::ranges::set_difference(called, done, std::back_inserter(missing));
             for (uint32_t t : missing) {
-                if (cfg.functions().contains(t) || is_native(t)) continue;
+                if (cfg.functions().contains(t) || is_native(t) || !tried.insert(t).second) continue;
                 auto fn = cfg.entry_inside(t);
                 if (!fn) continue;
                 bool inside_lifted = false;

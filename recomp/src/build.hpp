@@ -18,7 +18,7 @@ inline constexpr std::string_view kTitle = "Barbie Horse Adventures: Wild Horse 
 // refuses another build unless given --any-build.
 // (Not constexpr: code that asks whether it is recorded must not be a
 // constant condition to the compiler.)
-inline const std::string kSha256 = "";
+inline const std::string kSha256 = "51e6aa2a064be35414866d1f048b184f174db749a3c65156211d5307d2bda7e4";
 
 // .text by region (game code, XAPI, the C runtime, middleware...).
 inline const std::vector<TextRegion> kTextRegions = {};

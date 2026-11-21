@@ -43,7 +43,10 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 
 ## Known facts worth not rediscovering
 
-- **The game has not been read.** In the session that made v0.1.0 the owner's PC had no folder connected and no folder named for this game in the home folder, Desktop, Documents or Downloads (which hold the other recomps' builds and Xbox image tools). Ask the owner where the dump is and to connect that folder; local paths are not written in this repository (put them in the Project's `claude/status.md`).
+- **The game:** the owner's dump is an extracted disc beside the `.iso` on the owner's PC (its path is in the Project's `claude/status.md`, never in this repository). A session asks for access to that folder (`device_request_folder_access`) and stages `default.xbe` (2.4 MB); the `.iso` (588 MB) is over the staging limit. Everything in `docs/xbe-analysis.md` came from that file.
+- The supported build: SHA-256 `51e6aa2a…7e4` in `build.hpp`. Since it is recorded, anything run on a synthetic or test XBE needs `--any-build` (the CMake tests pass it).
+- First results (v0.4.0): XDK 5558; no XACT, no Bink, movies are XMV; 120 kernel imports, 36 without native code (mostly the hardware libraries'); `.text` is laid out as the sister game's (aligned game code `0x11000`–about `0xE9000` and about `0xF0000`–`0x146000`, unaligned XAPI between and C runtime after, EH funclets last); 5,844 of 5,899 functions lift, the failures listed by reason in `docs/xbe-analysis.md`.
+- `qilin lift` on the whole game takes about 4 seconds; if it runs for minutes, something loops (v0.4.0 fixed one such loop).
 - A cloud session reaches the PC only while the Claude desktop app is open there, and in the sister projects' sessions it could list and stage files (up to 400 MB each) but had no shell. A disc image is larger than that: have `Analyse game.bat` run on the PC, then stage `analysis-out/` (small) and `analysis-out/extracted/default.xbe`. If the owner has an extracted disc, `default.xbe` can be staged directly.
 - After a repository is renamed, a cloud session's access is to the old name: `gh` and pushes answer 403 about numeric-ID paths until the new name is added to the session (`add_repo`) and the remote's URL is changed. `gh run list` fails the same way; use `gh api repos/<owner>/<repo>/actions/runs`.
 - Tags don't reach GitHub from a cloud session (the proxy refuses pushing them); `main` does. Releases are marked by their commit's title (`vX.Y.Z: ...`) and the changelog.
@@ -59,20 +62,20 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - After editing `CMakeLists.txt`, run `cmake -S . -B build` again before building one target by name: `cmake --build --target new_target` on a stale tree says there is no such rule.
 - In the v0.2.0 session a request for access to the PC's Downloads folder was refused by the session's own permission rules, not by the owner: the owner has to connect the game's folder from the desktop app ("Add folder").
 
-## Status (v0.3.0)
+## Status (v0.4.0)
 
-- The tools build and their tests pass under GCC 14 and Clang (zig) locally; CI is green on all six configurations at v0.3.0 (commit `cf1a03d`), the end-to-end programs included on MSVC, macOS and ARM64. They have run only on synthetic files.
+- The tools build and their tests pass under GCC 14 and Clang (zig) locally and in CI; since v0.4.0 they have read the game (see above). No lifted game code has been compiled or run.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
 - v0.2.0: the renderer, audio engine, platform layer and settings menu are in, with their tests; `qilin_menu_preview` shows the menu over a test card (seen working under Xvfb on Mesa's software driver). Nothing drives them from a game yet.
-- Unchecked: **everything on the real game**; the disc reader on a real image; the PowerShell script (never run).
+- Unchecked: the disc reader on a real image; the PowerShell script (never run); the lifted game code (not compiled yet); `qilin_run` on the game.
 
 ## Next steps, in order
 
-1. Get the game: ask the owner for the dump's folder (see above). Run `Analyse game.bat` there, or stage `default.xbe`.
-2. The first analysis (`docs/xbe-analysis.md`): record the SHA-256 in `game::kSha256`, the sections and their plans, the XDK libraries and versions, the kernel imports. Fix whatever the loader or the disc reader gets wrong on the real files.
-3. `qilin align`, then `cfg`, `suspects`, `coverage --list`: settle alignment and the data sections, draw the `.text` regions (game, engine, XAPI, C runtime) with evidence into `game.hpp` and a new `docs/code-analysis.md`. The decoder cross-check (`verify_decoder.py`, needs libLLVM).
-4. Coverage to 0 unknown bytes in lifted regions; every function lifting; then bring over GBTGhoulies' `tools/difftest` and its checks with this game's conventions.
-5. The first run: `qilin lift`, `-DQILIN_GEN_DIR`, `qilin_run <extracted disc>`, and provide what each stop names. XbSymbolDatabase names for this game's XDK build (`tools/gen/xdk_symbols.py`), then Direct3D, DirectSound and XInput from GBTGhoulies over the layers already here; then the player kit and `Play Wild Horse Rescue.bat`.
+1. The regions of `.text`, each boundary with its evidence, into `game::kTextRegions` and a new `docs/code-analysis.md`: the game, XAPI, the second aligned stretch (what is it?), the C runtime, the funclets. The source-file strings in the executable help. Then `kAlignedRegions`, and the unknown bytes to 0 (`qilin coverage --list`) and the 73 unresolved indirect jumps.
+2. The 55 functions that don't lift: the C runtime's glue into `game::conventions()` (the sister project's `main.cpp` history shows what to look for), MMX and the few missing instructions in the lifter, XAPI's privileged start-up code into `game::kNative`.
+3. The decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM) and GBTGhoulies' `tools/difftest` brought over with this game's conventions.
+4. Compile the lifted code (`-DQILIN_GEN_DIR`) and the first run: `qilin_run <extracted disc>` on the owner's PC or with the disc's files staged, providing what each stop names. XbSymbolDatabase names for XDK 5558 (`tools/gen/xdk_symbols.py`).
+5. Direct3D, DirectSound and XInput from GBTGhoulies against this game's XDK build; XMV; then the player kit and `Play Wild Horse Rescue.bat`.
 
 ## Conventions
 

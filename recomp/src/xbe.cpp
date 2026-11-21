@@ -23,9 +23,12 @@ constexpr uint32_t kDebugEntryKey = 0x94859D4B;
 constexpr uint32_t kRetailThunkKey = 0x5B6D40B6;
 constexpr uint32_t kDebugThunkKey = 0xEFB1F152;
 
-// Sections that are not x86 code. DOLBY is APU DSP microcode.
-constexpr std::array<std::string_view, 8> kNonCode = {".rdata",    ".data",     "BINKDATA",         "DOLBY",
-                                                      "$$XTIMAGE", "$$XSIMAGE", "dirtydisk_bitmap", ".XTLID"};
+// Sections that are not x86 code (a section's flags don't say: .rdata is
+// marked executable in this game's XBE). DOLBY is APU DSP microcode; .data1
+// and sig are this game's (docs/xbe-analysis.md); BINKDATA and
+// dirtydisk_bitmap are the sister game's and harmless here.
+constexpr std::array<std::string_view, 10> kNonCode = {".rdata",    ".data",     ".data1",           "sig",    "BINKDATA", "DOLBY",
+                                                       "$$XTIMAGE", "$$XSIMAGE", "dirtydisk_bitmap", ".XTLID"};
 
 // Internal: parse failures unwind to Xbe::parse, which turns them into an
 // std::unexpected. Keeps the many bounds checks below to one line each.

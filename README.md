@@ -8,16 +8,16 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 
 ## Status
 
-**It doesn't run the game yet, and the tools have not yet read the game.** What exists is the recompiler core and the console-level part of the runtime (the kernel, the scheduler, the file system, the renderer, sound, window, input, the settings menu), brought over from GBTGhoulies--QilinRecomp and stripped of everything that described that game. The next step is the first analysis of the game itself (`docs/xbe-analysis.md`).
+**It doesn't run the game yet.** The tools have read it (v0.4.0, `docs/xbe-analysis.md`): 7,659 functions found, 97.958% of the game's code section accounted for, and 5,844 of its 5,899 functions lift to C++ on the first pass. None of that lifted code has been compiled or run yet. The recompiler core and the console-level part of the runtime (the kernel, the scheduler, the file system, the renderer, sound, window, input, the settings menu) come from GBTGhoulies--QilinRecomp, stripped of everything that described that game.
 
 | Piece | State |
 |---|---|
 | Disc image reader (the Xbox DVD file system; a full-disc dump or the game partition alone) | ✅ tested on synthetic images, malformed ones included; `qilin disc`, `qilin extract` |
-| XBE loader (headers, certificate, sections, libraries, kernel thunks, flat image), the build recognised by SHA-256 | ✅ tested on a synthetic XBE; the supported build's hash is not recorded yet |
+| XBE loader (headers, certificate, sections, libraries, kernel thunks, flat image), the build recognised by SHA-256 | ✅ reads the game; the supported build is recorded |
 | x86 decoder (Zydis, vendored) | ✅ carried over; its cross-check against LLVM needs the game |
-| Function discovery and control flow (recursive descent, switch tables, C++ exception and SEH tables, data-as-code validation), byte coverage | ✅ carried over; not yet run on the game |
-| Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | ✅ carried over; not yet run on the game |
-| What the analysis has established about the game (`recomp/src/game.hpp`) | empty: nothing is assumed from another game |
+| Function discovery and control flow (recursive descent, switch tables, C++ exception and SEH tables, data-as-code validation), byte coverage | ✅ 7,659 functions, 262 jump tables; 28,607 bytes of `.text` still unknown, 73 indirect jumps unresolved |
+| Lifter, x86 → C++ (integer, scalar SSE, x87 with precision control, jump tables, string operations, calls, C++ exception frames) | 🔨 5,844 of 5,899 functions in `.text` lift; 55 to do (C runtime glue, MMX, a few instructions) |
+| What the analysis has established about the game (`recomp/src/game.hpp`) | 🔨 the build's identity; the regions of `.text`, alignment and conventions are next |
 | Differential test of every lifted function against the original x86 | to do, with the game |
 | Renderer (Vulkan 1.3), audio engine, window, controllers, sound output (SDL3) | ✅ carried over from GBTGhoulies--QilinRecomp in v0.2.0, with their tests; not yet driven by the game |
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |

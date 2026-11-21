@@ -173,8 +173,8 @@ std::string settings_text(const Settings& s) {
          "# 0: the device's own (5.1 where it has six speakers), 2: stereo, 6: 5.1. From the next start.\n"
          "channels = " << s.channels << "\n\n";
     o << "[console]\n"
-         "# The Xbox's language, which the game reads: 1 English, 2 Japanese, 3 German,\n"
-         "# 4 French, 5 Spanish, 6 Italian. From the next start.\n"
+         "# The Xbox's language, which the game reads: 1 English, 3 German, 4 French,\n"
+         "# 5 Spanish, 6 Italian. From the next start.\n"
          "language = " << s.language << "\n";
     return o.str();
 }
@@ -257,7 +257,11 @@ Settings parse_settings(const std::string& text, std::vector<std::string>& warni
             }
             else ok = false;
         } else if (section == "console") {
-            if (key == "language") ok = read_uint(v, 1, 6, &s.language);  // the console's languages; which the disc has is to confirm (docs/xbe-analysis.md)
+            if (key == "language") {
+                uint32_t asked = 0;
+                ok = read_uint(v, 1, 6, &asked) && asked != 2;  // 2 Japanese: not on this disc
+                if (ok) s.language = asked;
+            }
             else ok = false;
         } else {
             ok = false;

@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.3.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.4.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -133,13 +133,15 @@ function(qilin_tool_test name expect)
     add_test(NAME qilin_tool_${name} COMMAND qilin ${ARGN})
     set_tests_properties(qilin_tool_${name} PROPERTIES FIXTURES_REQUIRED qilin_xbe_file PASS_REGULAR_EXPRESSION "${expect}")
 endfunction()
-qilin_tool_test(info "sha256: [0-9a-f]+" info ${QILIN_TEST_XBE})
-qilin_tool_test(imports "AvGetSavedDataAddress" imports ${QILIN_TEST_XBE})
-qilin_tool_test(cfg "functions" cfg ${QILIN_TEST_XBE})
-qilin_tool_test(align "\\.text" align ${QILIN_TEST_XBE})
-qilin_tool_test(lift "lifted [0-9]+ of [0-9]+ functions" lift ${QILIN_TEST_XBE} --out ${CMAKE_BINARY_DIR}/synthetic-gen)
+qilin_tool_test(info "sha256: [0-9a-f]+" info ${QILIN_TEST_XBE} --any-build)
+qilin_tool_test(imports "AvGetSavedDataAddress" imports ${QILIN_TEST_XBE} --any-build)
+qilin_tool_test(cfg "functions" cfg ${QILIN_TEST_XBE} --any-build)
+qilin_tool_test(align "\\.text" align ${QILIN_TEST_XBE} --any-build)
+qilin_tool_test(lift "lifted [0-9]+ of [0-9]+ functions" lift ${QILIN_TEST_XBE} --out ${CMAKE_BINARY_DIR}/synthetic-gen --any-build)
 # Unknown bytes in a lifted region are an error: the synthetic XBE has seven.
-qilin_tool_test(coverage "unknown bytes in lifted regions: [1-9]" coverage ${QILIN_TEST_XBE} --list)
+qilin_tool_test(coverage "unknown bytes in lifted regions: [1-9]" coverage ${QILIN_TEST_XBE} --list --any-build)
+# An executable that is not the supported build is refused unless --any-build is given.
+qilin_tool_test(other_build "this is not the supported build" info ${QILIN_TEST_XBE})
 # Not an XBE and not a disc image: refused, with the reason.
 qilin_tool_test(not_a_game "not an Xbox disc image" info ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE)
 

@@ -2,6 +2,21 @@
 
 All notable changes to this project are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game. Past entries are never rewritten.
 
+## [0.4.0] - 2026-11-21
+
+The first analysis: the tools have read the game.
+
+### Added
+- `docs/xbe-analysis.md`: the executable's identity, memory layout, sections with their plans, XDK libraries (5558), kernel imports against what the runtime provides, the first function discovery (7,659 functions, 97.958% of `.text` accounted for), function alignment by range, the first lift (5,844 of 5,899 functions in `.text`) with the failures by reason, and what the disc holds.
+- The supported build's SHA-256 (`recomp/src/build.hpp`): the tools and `qilin_run` now refuse any other executable unless given `--any-build`. A test checks the refusal.
+
+### Changed
+- `.data1` and `sig` are data sections to the loader (they were swept as code).
+- The settings menu's languages are the console languages the disc has tables for: English, German, French, Spanish, Italian (Japanese is refused again in the settings file).
+
+### Fixed
+- `qilin lift` never ended when a secondary entry inside a lifted function failed to lift: it was tried again for ever. Each is tried once and reported. (The sister project's code has the same loop; there every such entry lifts.)
+
 ## [0.3.0] - 2026-11-21
 
 The kernel, and programs that run: an Xbox executable goes through the lifter to a native program over the native kernel. Still nothing from the game: every check is on test programs.
