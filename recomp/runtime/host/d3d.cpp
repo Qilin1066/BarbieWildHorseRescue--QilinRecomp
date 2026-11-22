@@ -614,6 +614,18 @@ void get_display_mode(rt::Context& c) {
 void pump_window(const Device& d);
 std::pair<uint32_t, uint32_t> surface_size(const rt::Context& c, uint32_t surf);
 
+// VOID D3DDevice_KickPushBuffer(): the original (0x167260) has the GPU start
+// on the commands queued so far (CDevice_KickOff). Draws reach the renderer
+// as they are made here; nothing waits to be kicked.
+void kick_push_buffer(rt::Context& c) { ret(c, c.eax, 0); }
+
+// HRESULT D3DDevice_PersistDisplay(): keeps the frame on screen through a
+// reboot into another program (the original, 0x1688B0, hands a copy of the
+// front buffer to the kernel, AvSetSavedDataAddress). The game calls it on
+// a disc error before it gives up; the runtime doesn't reboot, so there is
+// nothing to keep. S_OK, as the original returns with a front buffer.
+void persist_display(rt::Context& c) { ret(c, 0, 0); }
+
 // VOID D3DDevice_GetDisplayFieldStatus(D3DFIELD_STATUS*): Field, VBlankCount.
 // The display is interlaced (GetDisplayMode), so the field is odd (1) or
 // even (2), alternating every vblank, as the original reads the display's
@@ -4271,6 +4283,8 @@ constexpr D3dFn kD3d[] = {
     {"D3DPalette_Lock2", 8, palette_lock2},
     {"D3DDevice_EnableOverlay", 4, enable_overlay},
     {"D3DDevice_GetDisplayFieldStatus", 4, get_display_field_status},
+    {"D3DDevice_KickPushBuffer", 0, kick_push_buffer},
+    {"D3DDevice_PersistDisplay", 0, persist_display},
     {"D3DDevice_GetOverlayUpdateStatus", 0, get_overlay_update_status},
     {"D3DDevice_UpdateOverlay", 20, update_overlay},
     {"D3DDevice_GetDepthStencilSurface2", 0, get_depth_stencil_surface2},

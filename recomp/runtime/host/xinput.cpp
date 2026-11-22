@@ -158,6 +158,13 @@ void x_input_set_state(rt::Context& c) {
     ret(c, kErrorIoPending, 8);
 }
 
+// DWORD XMountMUA(DWORD dwPort, DWORD dwSlot, PCHAR pchDrive) and
+// DWORD XUnmountMU(DWORD dwPort, DWORD dwSlot): a memory unit. None is ever
+// plugged in (XGetDevices), and the engine mounts only what it was told of
+// (0x1294DF), so these answer as the console does for an empty slot.
+void x_mount_mu(rt::Context& c) { ret(c, kErrorDeviceNotConnected, 12); }
+void x_unmount_mu(rt::Context& c) { ret(c, kErrorDeviceNotConnected, 8); }
+
 }  // namespace
 
 void register_xinput(platform::Input* input) {
@@ -181,6 +188,8 @@ void register_xinput(platform::Input* input) {
     register_hle(symbol("XInputClose"), "XInputClose", x_input_close);
     register_hle(symbol("XInputGetState"), "XInputGetState", x_input_get_state);
     register_hle(symbol("XInputSetState"), "XInputSetState", x_input_set_state);
+    register_hle(symbol("XMountMUA"), "XMountMUA", x_mount_mu);
+    register_hle(symbol("XUnmountMU"), "XUnmountMU", x_unmount_mu);
 }
 
 }  // namespace qilin::host

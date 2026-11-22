@@ -89,6 +89,6 @@ The game plays its movies with Microsoft's XMV library, which is linked in its o
 
 ## Plan
 1. **Past the title screen**, into the front end's menus and the first ride.
-2. **The rest the game calls:** `PersistDisplay` (the game calls it when a package is missing, before giving up), `KickPushBuffer`. Palettes, `SetShaderConstantMode` and `D3DResource_BlockUntilNotBusy` are in (`SetPalette` and `SetShaderConstantMode` mirror this build's `0x168350` and `0x16AE60`).
+2. **The rest the game calls:** every function it calls is now in. `PersistDisplay` (the game calls it when a package is missing, before giving up) returns S_OK with nothing to keep, as no reboot follows here; `KickPushBuffer` has nothing to start (v0.11.0). Palettes, `SetShaderConstantMode` and `D3DResource_BlockUntilNotBusy` are in (`SetPalette` and `SetShaderConstantMode` mirror this build's `0x168350` and `0x16AE60`).
 3. Each mirror of the library's code that the run reaches, checked against this build before it is trusted (`SetVertexShader`, `SetRenderTarget`, `SetTransform`, `SetScreenSpaceOffset` and `SetTextureState_TexCoordIndex` have been).
 4. The game-specific parts of the sister project's file (its frame clock, its HUD and aspect code) have no counterpart here yet: the frame clock and the projection are to be found in the engine (`docs/roadmap-and-design-targets.md`, steps 7 and 8). Until then only the original frame rate and 4:3 apply, and the settings that change them have no effect.
