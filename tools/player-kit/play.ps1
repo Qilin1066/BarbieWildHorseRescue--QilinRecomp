@@ -1,5 +1,5 @@
-# Play Barbie Horse Adventures: Wild Horse Rescue (the Windows download's "Play Wild Horse Rescue.bat"
-# runs this), as ApbArcade-QilinRecomp's and PunchOutWii-QilinRecomp's downloads.
+# Play Barbie Horse Adventures: Wild Horse Rescue (the Windows download's "Play Ghoulies.bat"
+# runs this), as ApbArcade--QilinRecomp's and PunchOutWii--QilinRecomp's downloads.
 #
 # The download holds everything but the game's own code: that is made here,
 # from your own disc, the first time (and again after an update): qilin
@@ -32,12 +32,34 @@ $stamp = Join-Path $work "built-with.txt"
 $discFile = Join-Path $work "disc-folder.txt"
 $kitVersion = (Get-Content (Join-Path $kit "VERSION") -Raw).Trim()
 $onWindows = ($PSVersionTable.PSEdition -eq "Desktop") -or $IsWindows   # Windows PowerShell 5.1 has no $IsWindows
+# SHA-256 of a file, upper-case hex. Not Get-FileHash: that cmdlet is missing
+# when Windows PowerShell inherits a PowerShell 7 module path, as it does
+# when started from pwsh (or from CI's shell).
+function Get-Sha256([string]$path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($path)
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+function Get-Identity([string[]]$parts) {
+    $lines = foreach ($part in $parts) {
+        $part.Replace('\', '/') + ':' + (Get-Sha256 (Join-Path $kit $part))
+    }
+    $hash = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+}
+# Names as well as bytes matter: removing or adding a header changes this key.
+$headers = @(Get-ChildItem -LiteralPath (Join-Path $kit 'include') -Recurse -File | Sort-Object FullName | ForEach-Object {
+    $_.FullName.Substring($kit.Length + 1)
+})
+$compiler = 'toolchain/bin/x86_64-w64-mingw32-clang++.exe'
+$compileKit = Get-Identity (@('kit.ninja', $compiler) + $headers)
+$kitIdentity = Get-Identity @('lib/libwildhorse_kit.a', 'qilin.exe', 'kit.ninja', 'play.ps1')
 # Off Windows (testing the download), QILIN_KIT_RUNNER runs the kit's programs.
 $runner = $env:QILIN_KIT_RUNNER
 
-# The supported build is the USA release, recognised by qilin by its
-# SHA-256 ("build: the supported build"). The runtime knows this XBE's
-# addresses, so no other build runs.
+# The supported Barbie build is validated by qilin using its SHA-256.
 
 # Runs one of the kit's programs, its output to the window; returns its exit code.
 function Invoke-Kit([string]$exe, [string[]]$arguments) {
@@ -60,11 +82,11 @@ $qilin = Join-Path $kit "qilin.exe"
 # is, else why not.
 function Test-Disc([string]$folder) {
     $xbe = Join-Path $folder "default.xbe"
-    if (-not (Test-Path $xbe)) {
+    if (-not (Test-Path -LiteralPath $xbe)) {
         return "there's no default.xbe in it (extract the whole disc image, for example with extract-xiso or xdvdfs, and choose the folder that holds default.xbe)"
     }
     foreach ($needed in @("Packages", "Video")) {
-        if (-not (Test-Path (Join-Path $folder $needed))) { return "there's no $needed folder in it (extract the whole disc, not just default.xbe)" }
+        if (-not (Test-Path -LiteralPath (Join-Path $folder $needed))) { return "there's no $needed folder in it (extract the whole disc, not just default.xbe)" }
     }
     $report = Read-Kit $qilin @("info", $xbe, "--any-build")
     if ($report.code -ne 0) { return "qilin can't read its default.xbe: $($report.text.Trim())" }
@@ -93,7 +115,12 @@ while ($true) {
 }
 $disc = $disc.TrimEnd('\')
 New-Item -ItemType Directory -Force -Path $work | Out-Null
-Set-Content -Path $discFile -Value $disc -Encoding UTF8
+
+$discIdentity = (Get-Sha256 (Join-Path $disc 'default.xbe'))
+$builtFor = "$kitVersion | $kitIdentity | $compileKit | $discIdentity"
+# Part of Ninja's compile command, so preserved/older timestamps cannot hide
+# changed headers, compiler or disc code. Runtime-only archive changes relink.
+$compileRevision = "rev$compileKit$discIdentity"
 
 # Starts the game, its messages into run.log (the file to send when something goes wrong).
 function Start-Game {
@@ -101,13 +128,14 @@ function Start-Game {
         Write-Host "(not on Windows: built, not started)"
         return
     }
-    $command = "`"`"$game`" `"$disc`" > `"$log`" 2>&1`""
-    Start-Process -FilePath "cmd.exe" -ArgumentList @("/s", "/c", $command) -WorkingDirectory $top -WindowStyle Hidden
+    Start-Process -FilePath $game -ArgumentList @("`"$disc`"") -WorkingDirectory $top `
+        -WindowStyle Hidden -RedirectStandardOutput $log -RedirectStandardError (Join-Path $top "run-errors.log")
 }
 
 # Up to date: just play.
 $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
-if (-not $Rebuild -and (Test-Path $game) -and $built -eq $kitVersion) {
+if (-not $Rebuild -and (Test-Path $game) -and $built -eq $builtFor) {
+    Set-Content -Path $discFile -Value $disc -Encoding UTF8
     if (-not $BuildOnly) { Start-Game }
     exit 0
 }
@@ -136,7 +164,7 @@ $lines = @(
     "include ../kit/kit.ninja",
     "cxx = ..\kit\toolchain\bin\x86_64-w64-mingw32-clang++.exe",
     "rule cxx",
-    "  command = `$cxx `$cxxflags -Igen -MD -MF `$out.d -c `$in -o `$out",
+    "  command = `$cxx `$cxxflags -DQILIN_KIT_COMPILE_ID=$compileRevision -Igen -MD -MF `$out.d -c `$in -o `$out",
     "  depfile = `$out.d",
     "  deps = gcc",
     "  description = Compiling `$in",
@@ -145,24 +173,40 @@ $lines = @(
     "  description = Linking `$out"
 )
 if (-not $onWindows) { $lines[3] = "cxx = " + $env:QILIN_KIT_CXX }   # testing off Windows: a cross compiler
+if (-not $sources.Count) { throw "qilin lift produced no C++ sources" }
 $objects = @()
 foreach ($s in $sources) {
     $object = "obj/$($s.BaseName).o"
     $objects += $object
     $lines += "build ${object}: cxx gen/$($s.Name)"
 }
-$lines += "build WildHorseRescue.exe: link $($objects -join ' ') | ../kit/lib/libwildhorse_kit.a"
+# This phony input is always dirty. Ninja is only invoked for a requested
+# rebuild or an invalid stamp; even an archive with old timestamps must link.
+$lines += "build force_link: phony"
+$lines += "build WildHorseRescue.exe: link $($objects -join ' ') | ../kit/lib/libwildhorse_kit.a force_link"
 $lines += "default WildHorseRescue.exe"
 Set-Content -Path (Join-Path $work "build.ninja") -Value $lines -Encoding ASCII
 
 Write-Host "== Compiling ($($sources.Count) files; the biggest take a few minutes each)" -ForegroundColor Cyan
 $ninja = if ($onWindows) { Join-Path $kit "ninja.exe" } else { "ninja" }
+if ($Rebuild) {
+    if ($onWindows) { $clean = Invoke-Kit $ninja @('-C', $work, '-t', 'clean') }
+    else { & $ninja -C $work -t clean | Out-Host; $clean = $LASTEXITCODE }
+    if ($clean -ne 0) { throw "cleaning the rebuild outputs failed" }
+}
 $jobs = [Math]::Max(1, [Environment]::ProcessorCount)
 if ($onWindows) { $code = Invoke-Kit $ninja @("-C", $work, "-j", "$jobs") }
 else { & $ninja -C $work -j $jobs | Out-Host; $code = $LASTEXITCODE }
 if ($code -ne 0) { throw "compiling failed" }
-Copy-Item (Join-Path $work "WildHorseRescue.exe") $game -Force
-Set-Content -Path $stamp -Value $kitVersion -Encoding ASCII
+$staged = "$game.new"
+Copy-Item -LiteralPath (Join-Path $work "WildHorseRescue.exe") -Destination $staged -Force
+if (Test-Path -LiteralPath $game) {
+    [System.IO.File]::Replace($staged, $game, "$game.previous", $true)
+} else {
+    [System.IO.File]::Move($staged, $game)
+}
+Set-Content -Path $stamp -Value $builtFor -Encoding ASCII
+Set-Content -Path $discFile -Value $disc -Encoding UTF8
 Write-Host ""
 Write-Host "Built: $game" -ForegroundColor Green
 if (-not $BuildOnly) {

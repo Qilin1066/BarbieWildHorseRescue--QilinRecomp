@@ -4,6 +4,20 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-22
+
+### Fixed
+- Reused DirectSound-owned buffers clear every requested byte, including trailing bytes of sizes not divisible by four. Explicit, idempotent mixer shutdown joins the worker and finalises capture output before controlled frame/window exits and `QILIN_EXIT_AFTER_ENTRY` termination.
+- Zero-frame audio processing no longer forms references into empty sample buffers. Route gain priming is retained; zero-frame submix feeds return without touching samples. UndefinedBehaviorSanitizer reproduced the original failure in the existing audio suite.
+- Guest RAM mapping installs its fault handler once. Repeated installation previously captured the Linux/macOS handler as its own predecessor, causing recursion when forwarding a non-guest fault. Windows no longer accumulates duplicate vectored handlers.
+- Windows kit rebuilds use content identity for runtime, headers, compiler, lifter and launcher. Changed inputs invalidate Ninja output despite preserved old timestamps; runtime-only changes relink without recompiling guest objects. `-Rebuild` cleans generated outputs. Replacement is staged, retains the previous executable, and leaves the working copy/stamp intact on failure.
+- The launcher starts the game directly, preserving literal shell metacharacters in disc paths, records the disc after a successful build, and writes stderr to `run-errors.log` beside `run.log`. The supported build is still validated using Barbie's own SHA-256 check.
+
+### Tests
+- Added real native DirectSound allocation/reuse tests with synthetic RAM, inspecting new physical reservations through the allocator's public API. No Ghoulies-only XDK entry points are assumed. Signal forwarding is checked after two mappings in isolated POSIX children.
+- Windows CI requires the real-Ninja launcher regression, including stale timestamps, compiler/header/disc changes, forced rebuild, locked-install recovery and native child arguments. Linux CI requires the Vulkan renderer test rather than accepting a skip.
+- [Validation record](docs/validation-0.16.md). No complete real-disc playthrough is claimed.
+
 ## [0.15.0] - 2026-11-22
 
 Faster guest memory, and a build script for Linux and macOS.

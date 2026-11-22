@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.15.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.16.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -229,6 +229,25 @@ add_executable(qilin_settings_tests recomp/runtime/platform/settings_tests.cpp)
 target_link_libraries(qilin_settings_tests PRIVATE qilin_platform qilin_warnings)
 add_test(NAME qilin_settings_tests COMMAND qilin_settings_tests)
 
+option(QILIN_REQUIRE_LAUNCHER_TESTS "Require Windows launcher tools (CI)" OFF)
+if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
+    find_program(QILIN_POWERSHELL NAMES powershell pwsh)
+    find_program(QILIN_NINJA NAMES ninja ninja-build)
+    if(QILIN_REQUIRE_LAUNCHER_TESTS AND (NOT QILIN_POWERSHELL OR NOT QILIN_NINJA))
+        message(FATAL_ERROR "Launcher tests require PowerShell and Ninja")
+    endif()
+    if(QILIN_POWERSHELL AND QILIN_NINJA)
+        add_executable(qilin_launcher_stub tools/check/launcher_stub.cpp)
+        target_link_libraries(qilin_launcher_stub PRIVATE qilin_warnings shell32)
+        add_test(NAME qilin_launcher_check COMMAND "${QILIN_POWERSHELL}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/launcher_check.ps1"
+            -Stub "$<TARGET_FILE:qilin_launcher_stub>" -Ninja "${QILIN_NINJA}"
+            -Launcher "${CMAKE_CURRENT_SOURCE_DIR}/tools/player-kit/play.ps1"
+            -Out "${CMAKE_CURRENT_BINARY_DIR}/launcher-check/$<CONFIG>")
+        set_tests_properties(qilin_launcher_check PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 # ---- Runtime host side: the kernel, natively (roadmap step 3) ----
 # The replacement registry, guest RAM, the scheduler, the kernel and its I/O
 # manager: the console's, the same for every game. Direct3D, DirectSound, the
@@ -241,7 +260,7 @@ add_library(qilin_host STATIC recomp/runtime/host/host.cpp recomp/runtime/host/k
                               recomp/runtime/host/game_hooks.cpp)
 target_include_directories(qilin_host PUBLIC recomp/runtime/host PRIVATE recomp/src)
 target_link_libraries(qilin_host PUBLIC qilin_runtime qilin_gfx qilin_audio qilin_platform qilin_ui PRIVATE qilin_warnings)
-add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp)
+add_executable(qilin_host_tests recomp/runtime/host/host_tests.cpp recomp/runtime/dispatch.cpp tools/player-kit/link_check.cpp)
 target_link_libraries(qilin_host_tests PRIVATE qilin_host qilin_warnings)
 add_test(NAME qilin_host_tests COMMAND qilin_host_tests)
 

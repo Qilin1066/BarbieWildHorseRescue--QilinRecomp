@@ -162,13 +162,16 @@ struct DirectSound {
     bool paused = false;                                 // the settings menu is up: nothing mixed, the clock stopped
     std::chrono::steady_clock::time_point paused_at;
     std::condition_variable wake;
-    ~DirectSound() {
+    void stop() {
         if (mixer.joinable()) {
             quit = true;
             wake.notify_all();
             mixer.join();
         }
+        wav.reset();
+        out = nullptr;
     }
+    ~DirectSound() { stop(); }
 };
 DirectSound& ds() {
     static DirectSound d;
@@ -516,7 +519,9 @@ void create_sound_buffer(rt::Context& c) {
         if (const auto it = spare.find(bytes); it != spare.end()) mem = it->second, spare.erase(it);
         else mem = contiguous(bytes, 0, 0xFFFFFFFFu, 0, 4);  // as MmAllocateContiguousMemory: PAGE_READWRITE
         if (!mem) unmodelled("IDirectSound_CreateSoundBuffer", strf("%u bytes of buffer memory (none left)", bytes));
-        for (uint32_t k = 0; k + 4 <= bytes; k += 4) st(c, mem + k, 0);
+        rt::check({c.mem, c.mem_size}, mem, bytes, 0);
+        rt::traced(mem, bytes);
+        std::memset(c.mem + mem, 0, bytes);
         b->own = mem, b->own_bytes = bytes;
         b->voice.set_data(mem, bytes);
     }
@@ -1540,6 +1545,8 @@ void pump_audio(rt::Context& c) {
     }
     deliver(c);
 }
+
+void shutdown_dsound() { ds().stop(); }
 
 void register_dsound(const std::string& dump_wav, platform::AudioOut* out) {
     ds().dump_path = dump_wav;

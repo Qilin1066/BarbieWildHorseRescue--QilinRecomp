@@ -296,6 +296,7 @@ bool right_side(uint32_t bin) { return bin == kFrontRight || bin == kBackRight |
 
 bool Voice::process(const uint8_t* mem, size_t mem_size, uint32_t frames) {
     if (!playing_ || (bytes_ == 0 && !submix_ && !stream_)) return false;
+    if (!frames) return true;  // zero-frame gain priming has no samples
     const uint32_t ch = format_.channels;
     // The source, resampled (a 3D voice's Doppler offset on its pitch).
     std::vector<float> inter(size_t(frames) * ch, 0.0f);
@@ -424,6 +425,7 @@ void Voice::mix(const uint8_t* mem, size_t mem_size, Bins& out, uint32_t frames,
         const float g = float(attenuation_gain(attenuation_for(mb))) / 16384.0f;
         const float from = fresh_ ? 0.0f : route_gain_[k] < 0 ? g : route_gain_[k];
         route_gain_[k] = g;
+        if (!frames) continue;
         if (g == 0.0f && from == 0.0f) continue;
         const float* src = &scratch_[size_t(c) * frames];
         if (by_route) {
@@ -458,6 +460,7 @@ void Voice::mix_into(const uint8_t* mem, size_t mem_size, Voice& submix, uint32_
 }
 
 void Voice::feed(Voice* target, uint32_t frames) {
+    if (!frames) return;
     Voice& submix = *target;
     const float g = float(attenuation_gain(attenuation_for(int64_t(volume) - headroom))) / 16384.0f;
     const uint32_t dst = submix.format_.channels, ch = format_.channels;

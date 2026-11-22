@@ -437,7 +437,7 @@ void deliver_frame(Device& d) {
         std::fflush(stderr);
         std::printf("qilin_run: %llu frames presented; stopping as asked (--frames)\n", (unsigned long long)n);
         std::fflush(stdout);
-        std::exit(0);
+        host::shutdown_dsound(); std::exit(0);
     }
 }
 
@@ -997,7 +997,7 @@ void pump_window(const Device& d) {
         std::fflush(stderr);
         std::printf("qilin_run: the window was closed after %u frames\n", d.swaps);
         std::fflush(stdout);
-        std::exit(0);
+        host::shutdown_dsound(); std::exit(0);
     }
 }
 

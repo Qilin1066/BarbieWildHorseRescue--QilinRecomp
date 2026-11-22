@@ -83,3 +83,11 @@ work\               made when building: the recompiled code (from your disc)
 LICENSES\           the licences of everything included
 
 Source, changes and issues: https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp
+
+Updates
+-------
+Close the game before updating. Changed runtime contents trigger a new link,
+even with older timestamps; changed headers/compiler/disc code recompile.
+-Rebuild forces a clean build. Updates stage the new executable and retain
+WildHorseRescue.exe.previous; a failed replacement preserves the working copy.
+Game output is in run.log and run-errors.log. Send both when reporting a fault.

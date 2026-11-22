@@ -185,6 +185,7 @@ void pause_audio(bool paused);
 
 // DirectSound (dsound.cpp), over the software mixer; dump_wav non-empty
 // writes everything mixed there (--dump-audio).
+void shutdown_dsound();
 void register_dsound(const std::string& dump_wav, platform::AudioOut* out);
 // Brings the mix up to now (DirectSound calls do this too); Swap calls it, so
 // sound keeps playing while the game doesn't reach DirectSound.

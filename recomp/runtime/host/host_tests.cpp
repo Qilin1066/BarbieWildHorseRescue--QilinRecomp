@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <thread>
+#include <vector>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +13,7 @@
 #include <string>
 
 #if !defined(_WIN32)
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -73,6 +76,18 @@ struct Guest {
         put32(oa + 4, object_string(name));
         put32(oa + 8, 0x40);  // OBJ_CASE_INSENSITIVE
         return oa;
+    }
+    uint32_t call_xdk(const char* fn, std::initializer_list<uint32_t> args) {
+        const auto* symbol = host::xdk_symbol(fn);
+        CHECK(symbol != nullptr);
+        if (!symbol) return UINT32_MAX;
+        c.esp = 0xF0000 - 4 * uint32_t(args.size() + 1);
+        put32(c.esp, 0x5555);
+        uint32_t k = 4;
+        for (uint32_t a : args) put32(c.esp + (k += 4) - 4, a);
+        rt::call_unlifted(c, symbol->address);
+        CHECK(c.ret_to == 0x5555 && c.esp == 0xF0000);
+        return c.eax;
     }
     uint32_t call(const char* fn, std::initializer_list<uint32_t> args) {
         const host::KernelExport* e = host::kernel_export(std::string_view(fn));
@@ -150,6 +165,32 @@ int main() {
     vram[r1 + 0x1000] = 7;
     CHECK(v.decommit(r1 + 0x1000, 0x1000) && v.commit(r1 + 0x1000, 1, 4) && vram[r1 + 0x1000] == 0);  // recommitted: zero again
     CHECK(v.release(r1) && !v.release(r1) && v.reserve(0, 0x1000, 4, false) == 0x10000);
+
+#if !defined(_WIN32)
+    // Run before the parent's first mapping: retain a pre-existing handler
+    // across two maps. A self-chained handler recurses instead of reaching it.
+    for (const int sig : {SIGSEGV, SIGBUS}) {
+        const pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            alarm(5);  // a broken signal chain must not hang the suite
+            struct sigaction previous{};
+            previous.sa_flags = SA_SIGINFO;
+            previous.sa_sigaction = [](int, siginfo_t*, void*) { std::_Exit(42); };
+            sigemptyset(&previous.sa_mask);
+            if (sigaction(sig, &previous, nullptr) != 0) std::_Exit(10);
+            std::string error;
+            if (!host::map_guest_ram(0x100000, &error) || !host::map_guest_ram(0x100000, &error)) std::_Exit(11);
+            raise(sig);  // outside the guest reservation: forwarded exactly once
+            std::_Exit(12);
+        }
+        if (child > 0) {
+            int status = 0;
+            CHECK(waitpid(child, &status, 0) == child);
+            CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 42);
+        }
+    }
+#endif
 
     // Guest RAM: the same pages at 0, 0x80000000 and 0xF0000000, zero to start.
     {
@@ -339,6 +380,64 @@ int main() {
     // Virtual time (last: it can't be switched off): still until the guest
     // moves it, by work and by jumps, never back; the system time from
     // 2001-11-15 (100 ns since 1601); rdtsc's reads cost a little each.
+    // A real DirectSound mixer starts on another thread and must be joined
+    // before its guest RAM goes away. Shutdown finalises the capture, twice safely.
+    {
+        const auto wav_path = std::filesystem::temp_directory_path() / std::filesystem::path("wildhorse-mixer.wav");
+        Guest guest;
+        guest.ram = std::make_unique<uint8_t[]>(16 * 1024 * 1024);
+        guest.c.mem = guest.ram.get(); guest.c.mem_size = 16 * 1024 * 1024;
+        host::vm().init(guest.ram.get(), 0x10000, 0x80000);
+        host::register_dsound(wav_path.string(), nullptr);
+        const auto* create = host::xdk_symbol("DirectSoundCreate");
+        CHECK(create != nullptr);
+        if (create) {
+            const uint32_t device_out = guest.alloc(4);
+            CHECK(guest.call_xdk("DirectSoundCreate", {0, device_out, 0}) == 0);
+            const uint32_t device = guest.u32(device_out);
+            const uint32_t desc = guest.alloc(24), format = guest.alloc(18), result = guest.alloc(4);
+
+            guest.put32(format, 1 | (1u << 16));  // PCM, mono
+            guest.put32(format + 4, 22050); guest.put32(format + 8, 22050);
+            guest.put32(format + 12, 1 | (8u << 16));  // 8-bit, one byte per frame
+            guest.put32(desc, 24); guest.put32(desc + 12, format);
+            for (const uint32_t bytes : {1u, 2u, 3u, 5u, 6u, 7u, 4099u}) {
+                guest.put32(desc + 8, bytes);
+                uint32_t owned = 0;
+                const auto reserved = host::vm().reserved_bytes();
+                uint64_t after_first = 0;
+                for (int reuse = 0; reuse < 2; ++reuse) {
+                    std::vector<uint32_t> previous;
+                    for (uint32_t at = 0x10000; at < 0x80000; at += 0x1000)
+                        if (host::vm().region_size(at)) previous.push_back(at);
+                    CHECK(guest.call_xdk("IDirectSound_CreateSoundBuffer", {device, desc, result, 0}) == 0);
+                    const uint32_t handle = guest.u32(result);
+                    uint32_t data = owned;
+                    if (!reuse) {
+                        unsigned added = 0;
+                        for (uint32_t at = 0x10000; at < 0x80000; at += 0x1000)
+                            if (host::vm().region_size(at) && std::find(previous.begin(), previous.end(), at) == previous.end()) { data = at; ++added; }
+                        CHECK(added == 1);
+                        owned = data; after_first = host::vm().reserved_bytes();
+                    } else CHECK(host::vm().reserved_bytes() == after_first);
+                    CHECK(data >= 0x10000 && uint64_t(data) + bytes <= 0x80000 && after_first >= reserved);
+                    CHECK(std::all_of(guest.ram.get() + data, guest.ram.get() + data + bytes, [](uint8_t b) { return b == 0; }));
+                    std::memset(guest.ram.get() + data, 0xA5, bytes);
+                    CHECK(guest.call_xdk("IDirectSoundBuffer_Release", {handle}) == 0);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            host::pump_audio(guest.c);
+        }
+        host::shutdown_dsound(); host::shutdown_dsound();
+        CHECK(std::filesystem::file_size(wav_path) > 44);
+        std::ifstream wave(wav_path, std::ios::binary);
+        char riff[4]{}; wave.read(riff, 4);
+        CHECK(std::memcmp(riff, "RIFF", 4) == 0);
+        wave.close();
+        std::filesystem::remove(wav_path);
+    }
+
     {
         host::clock::use_virtual();
         const auto t0 = host::clock::now();

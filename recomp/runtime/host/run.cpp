@@ -317,7 +317,7 @@ int main(int argc, char** argv) {
     // (macOS), so it stays: it gives the processor up for good, waking only
     // to do the host's housekeeping. QILIN_EXIT_AFTER_ENTRY=1 ends the
     // process instead (the test programs, which create no thread).
-    if (const char* v = std::getenv("QILIN_EXIT_AFTER_ENTRY"); v && *v && *v != '0') std::_Exit(0);
+    if (const char* v = std::getenv("QILIN_EXIT_AFTER_ENTRY"); v && *v && *v != '0') { host::shutdown_dsound(); std::_Exit(0); }
     for (;;) {
         host::sched::sleep_until(host::clock::now() + std::chrono::milliseconds(10));
         host::idle(c);

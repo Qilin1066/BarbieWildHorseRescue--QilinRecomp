@@ -46,6 +46,7 @@ jobs:
           if [ -n "${{ matrix.cxx }}" ]; then
             args+=(-DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
           fi
+          if [ "${{ runner.os }}" = Windows ]; then args+=(-DQILIN_REQUIRE_LAUNCHER_TESTS=ON); fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DQILIN_WERROR=ON "${args[@]}"
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -53,7 +54,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+            xvfb-run -a env QILIN_REQUIRE_VULKAN=1 ctest --test-dir build -C Release --output-on-failure
           else
             ctest --test-dir build -C Release --output-on-failure
           fi

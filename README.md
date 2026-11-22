@@ -29,6 +29,8 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | Enhancements wired to the game | ✅ widescreen (Hor+, up to 4:1, culling widened with it), the HUD at the screen's edges, in the middle 4:3 or stretched, render resolution 1× to 4× with anisotropic filtering, the frame rate (the game times its frames itself), and the language: English, German, French, Spanish or Italian text from the disc's own tables (v0.13.0) |
 | Windows download (player kit) | ✅ built by CI on every push (v0.13.0): unpack, double-click `Play Wild Horse Rescue.bat`, choose your extracted disc; it recompiles your own `default.xbe` on your PC |
 
+Reliability checks for the latest changes are recorded in [the 0.16.0 validation notes](docs/validation-0.16.md). These do not establish a complete playthrough.
+
 ## Versions and changes
 
 Every release is recorded in [`CHANGELOG.md`](CHANGELOG.md). Past entries are kept, never rewritten. The version lives in one place, `project(... VERSION ...)` in `CMakeLists.txt`, and `qilin --version` prints it. While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game.
