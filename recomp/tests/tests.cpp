@@ -804,6 +804,19 @@ int main(int argc, char** argv) {
                               "rt::check_return(c, 0x11005u, 0x11000u); }"));
             CHECK(r->contains("fn_00011100(c);") && r->contains("fn_00011130(c);"));
             CHECK(r->contains("auto reload = [&] { esp = c.esp; };"));
+            CHECK(!r->contains("esp0_"));
+        }
+        // A callee that can return past its caller (Conventions::returns_past_caller).
+        Conventions conv;
+        conv.returns_past_caller = {0x11010u};
+        Lifter with(dec, &conv);
+        auto p = with.lift(f.at(0x11000));
+        CHECK(p.has_value());
+        if (p) {
+            CHECK(p->contains("const uint32_t esp0_ = c.esp;"));
+            CHECK(p->contains("fn_00011010(c); if (c.ret_to != 0x11005u && c.esp == esp0_ + 4u) { return; } reload(); "
+                              "rt::check_return(c, 0x11005u, 0x11000u); }"));
+            CHECK(p->contains("fn_00011100(c); reload();"));  // the other calls as before
         }
     }
     if (f.contains(0x112D0)) {

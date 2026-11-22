@@ -82,15 +82,15 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - v0.8.0: Direct3D natively, with the window and settings menu; the game shows its legal notice and logos, plays the intro movie (XMV lifted whole, through the video overlay) with sound, and reaches its title screen ("Press START to begin"), where a headless run stays. To run it locally: the disc's `Packages/` and `Video/` beside `default.xbe` (staged from the owner's PC, never committed), `qilin_run --headless --dump-frames DIR <folder>`.
 - v0.3.0: the kernel-level host side and `qilin_run` are in; three test programs go from XBE to native programs and run under both local compilers. The entry-point start is untried on a real title (see `docs/runtime.md`, "to confirm").
 - v0.2.0: the renderer, audio engine, platform layer and settings menu are in, with their tests; `qilin_menu_preview` shows the menu over a test card (seen working under Xvfb on Mesa's software driver). Nothing drives them from a game yet.
-- Checked (v0.11.0): the decoder against LLVM, on every reachable instruction (`docs/recompiler-core.md`). Unchecked: the lifted code against the original (no differential test yet); the disc reader on a real image; the PowerShell script (never run).
+- Checked (v0.11.0): the decoder against LLVM, on every reachable instruction (`docs/recompiler-core.md`). Checked (v0.12.0): every lifted function against the original x86 under Unicorn (`tools/difftest`; 40,632 trials, 0 mismatches; `docs/recompiler-core.md` has the run and what it found). Unchecked: the disc reader on a real image; the PowerShell script (never run); the difftest on an ARM64 host or under UBSan.
 
 ## Next steps, in order
 
 1. Further into the game: out of the dressing room, the stables, the first ride (`--press` scripts the controller; the dressing room's outfit menu is where v0.8.x's runs stop going forward). **Read `docs/graphics.md` first.** Every Direct3D function the game calls is in (v0.11.0). Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
 2. DirectSound: 3D is in (v0.11.0: the library's calculator lifted, its blocks in guest memory, `dsound.cpp` under 3D). Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. Memory units: `XMountMUA`/`XUnmountMU` answer as for an empty slot (v0.11.0); saving to one would need them modelled.
-4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions. Until it passes, lifted code is unverified. (The decoder cross-check passes: v0.11.0.)
-5. Static analysis is as far as it goes without the differential test (v0.11.0, `docs/code-analysis.md`): no unknown bytes in lifted regions, the 73 unresolved jumps are run-time targets, 4 heuristic tables are unbounded in the code itself, two library stubs are named and unlikely to be reached.
+4. The differential test passes (v0.12.0). Rerun it after any lifter or analysis change (`docs/recompiler-core.md`, about 35 minutes); still to do: a `--sanitize` run, and mutation checks on this build.
+5. Static analysis is as far as it goes (v0.11.0, `docs/code-analysis.md`): no unknown bytes in lifted regions, the 73 unresolved jumps are run-time targets, 4 heuristic tables are unbounded in the code itself, two library stubs are named and unlikely to be reached.
 6. The disc's files for runs past start-up (stage `Packages/` in batches, or run on the owner's PC); the player kit and `Play Wild Horse Rescue.bat`.
 
 ## Conventions

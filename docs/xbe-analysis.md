@@ -81,7 +81,7 @@ So the build is laid out like the sister game's (aligned game code, unaligned Mi
 | 2 each | `xlat`; one-operand 8-bit `imul`; an 80-bit x87 store | lifter work |
 | 1 each | `fprem`; `int 0x2D` (the debugger's print); `mov` from `cs`; an unbalanced `ret` | lifter work, or native |
 
-None of the lifted code has been compiled or run yet, and no differential test has run.
+(Written at v0.4.0. Since then everything lifts and compiles, the game runs into its mini-games, and the differential test passes over every lifted function: v0.12.0.)
 
 ## The disc
 An extracted disc holds `default.xbe`, a `Packages` folder and a `Video` folder.

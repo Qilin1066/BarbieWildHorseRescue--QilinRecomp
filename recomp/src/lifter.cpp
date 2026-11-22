@@ -299,6 +299,7 @@ private:
     uint32_t written_ = 0;  // same bits: modified
     bool x87_ = false;      // uses the x87 register stack (needs ST())
     bool calls_ = false;    // has a call that returns here (needs reload())
+    bool esp0_ = false;     // needs its entry esp (a call that may return past it)
     std::string out_;
 };
 
@@ -762,6 +763,12 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
             if (t && flags_in(*t)) code += pack_flags(flags_in(*t)) + " ";
             code += t ? std::format("{}(c); ", Lifter::name(*t)) : std::string("rt::call(c, t); ");
             if (t && flags_out(*t)) code += unpack_flags(flags_out(*t)) + " ";
+            if (t && conv_ && conv_->returns_past_caller.contains(*t) && idx_.contains(ret)) {
+                // Returned past us (Conventions::returns_past_caller): our own
+                // return address is popped, esp is where our `ret` leaves it.
+                code += std::format("if (c.ret_to != 0x{:X}u && c.esp == esp0_ + 4u) {{ return; }} ", ret);
+                esp0_ = true;
+            }
             if (idx_.contains(ret)) code += std::format("reload(); rt::check_return(c, 0x{:X}u, 0x{:X}u); }}", ret, i.addr);
             else code += std::format("rt::trap(0x{:X}u, \"returned from a call the CFG took as no-return\"); }}", i.addr);
             line(code);
@@ -1786,6 +1793,7 @@ std::string FnEmitter::run() {
     std::string fn = std::format("void {}(rt::Context& c) {{\n", Lifter::name(f_.start));
     fn += std::format("    QILIN_FRAME(0x{:X}u, c.esp);\n", f_.start);
     fn += "    [[maybe_unused]] const rt::Mem m{c.mem, c.mem_size};\n";
+    if (esp0_) fn += "    const uint32_t esp0_ = c.esp;\n";
     if (!gprs.empty()) fn += std::format("    uint32_t {};\n", gprs);
     if (!xmms.empty()) fn += std::format("    rt::Xmm {};\n", xmms);
     if (!fx.empty()) fn += std::format("    uint32_t {};\n", fx);

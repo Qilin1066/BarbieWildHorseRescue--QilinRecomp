@@ -4,6 +4,20 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-22
+
+The differential test: every lifted function checked against the original x86, and no mismatch left.
+
+### Added
+- **`tools/difftest`**, the sister project's differential test, with this build's settings: its code pages, the C runtime's range, the shared epilogues that pop a caller's word, the 17 C runtime helpers that take their operands on the x87 stack, and the helper that returns to its caller's caller. Over all 6,772 lifted functions: 40,632 trials, 0 mismatches; 4,264 functions completed matching trials, the rest faulted in both versions on random pointers. `docs/recompiler-core.md` has the run and how to repeat it.
+- `qilin lift` writes `secondary.txt` and `tail_only.txt` beside the generated code: the entries inside another lifted function, and the targets only ever jumped to. The difftest uses them to tell code that runs in another function's frame.
+
+### Fixed
+- **The C runtime's `exp` trapped on an argument out of range**, found by the test. The x87 maths' range check (`0x148D06`) jumps to glue that drops its own return address and returns to its caller's caller; the lifted caller saw its callee come back somewhere other than the call site. The lifter takes a new reviewed convention, `returns_past_caller`: a call to such a helper accepts that return when esp is where the caller's own `ret` would leave it, and the caller returns too. With a unit test.
+
+### Changed
+- The difftest's harness has the reference's clock for `rdtsc` (it trapped there); Unicorn's `fprem` is replaced by the exact remainder (it was wrong for operands far apart in exponent; the lifted code was right); the transcendental reference rounds its operands to double, as the lifted registers hold them (`fldln2` then `fyl2x` differed by one bit); the check for x87 values past double's exponent range covers the function under test, not only the C runtime (random doubles near 1e-154 square out of range); NaN against NaN in an x87 register counts as matching, as in xmm lanes; a buffer overrun onto the return address counts as faulting in both versions once the original's first fetch outside the code is at that address. A mismatch report lists the x87 values the trial passed in.
+
 ## [0.11.0] - 2026-11-22
 
 Everything the game is known to call is in: specular and two-sided lighting, DirectSound's 3D positioning, the last four library functions; and the analysis is as complete as it gets without the differential test.

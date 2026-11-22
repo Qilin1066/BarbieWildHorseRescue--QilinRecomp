@@ -166,6 +166,11 @@ inline Conventions conventions() {
         0x1490B9,
         0x151DD4,  // __EH_prolog
     };
+    // x87 maths: the range check before f2xm1 jumps, out of range, to the
+    // glue at 0x148CB8, which drops its return address and runs the maths'
+    // shared error path in its caller's frame, returning to that caller's
+    // caller (callers 0x148BD6 and exp's 0x15227E).
+    c.returns_past_caller = {0x148D06};
     return c;
 }
 

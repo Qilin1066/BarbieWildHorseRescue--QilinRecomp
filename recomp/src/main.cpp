@@ -280,6 +280,13 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
         in_chunk = 0;
     };
     int lib_failed = 0;
+    // For the difftest, one address per line: entries inside a lifted
+    // function (secondary.txt), and targets only ever jumped to
+    // (tail_only.txt; some are a parent's code past a __finally block the
+    // CFG split off). Those that run in another function's frame can't be
+    // given that frame by a trial.
+    std::string secondary;
+    std::set<uint32_t> direct_calls, tail_targets;
     auto lift_one = [&](uint32_t a, const Function& fn) {
         ++total;
         auto r = lifter.lift(fn);
@@ -292,6 +299,8 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
         done.push_back(a);
         called.insert(fn.calls.begin(), fn.calls.end());
         called.insert(fn.tails.begin(), fn.tails.end());
+        direct_calls.insert(fn.calls.begin(), fn.calls.end());
+        tail_targets.insert(fn.tails.begin(), fn.tails.end());
         if (++in_chunk == 200) flush();
         return true;
     };
@@ -322,6 +331,7 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
                     if (t > f0.lo && t < f0.hi && std::ranges::binary_search(done, s0) && std::ranges::binary_search(f0.insns, t)) inside_lifted = true;
                 if (!inside_lifted) continue;
                 if (!lift_one(t, *fn)) ++lib_failed;
+                secondary += std::format("{:08x}\n", t);
                 more = true;
             }
         }
@@ -366,6 +376,11 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
     table += std::format("    {{0u, nullptr}}}};\nextern const size_t kFunctionCount = {};\n}}  // namespace qilin::gen\n", done.size());
     write_file(dir / "table.cpp", table);
     write_file(dir / "failures.txt", failures);
+    write_file(dir / "secondary.txt", secondary);
+    std::string tail_only;
+    for (uint32_t t : tail_targets)
+        if (!direct_calls.contains(t) && std::ranges::binary_search(done, t)) tail_only += std::format("{:08x}\n", t);
+    write_file(dir / "tail_only.txt", tail_only);
 
     std::println("lifted {} of {} functions ({} call targets without a lifted body get stubs)", done.size(), total, stubs.size());
     if (lib_n) std::println("  {} of them are library functions that lifted code can reach", lib_n);

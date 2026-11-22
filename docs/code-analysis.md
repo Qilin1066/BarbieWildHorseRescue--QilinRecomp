@@ -97,7 +97,7 @@ XAPI's entry point creates the title's main thread and returns. The main thread 
 
 What each stop needed, in order: the replaced libraries' static initializers lifted; the settings' whole user section (`ExQueryNonVolatileSetting` index `0xFF`, read by `GetTimeZoneInformation`); `RtlTimeToTimeFields`; named events and mutants; the controller library; the Win32 error for a write-protected volume; DirectSound.
 
-The differential test (lifted code against the original x86) has not run yet, so "lifts" and "runs this far" are not yet "computes the same".
+The differential test (lifted code against the original x86, v0.12.0) passes over every lifted function: "lifts" is now also "computes the same" on random states (`recompiler-core.md`, "Differential test").
 
 ## What the discovery pass leaves dynamic (v0.11.0)
 

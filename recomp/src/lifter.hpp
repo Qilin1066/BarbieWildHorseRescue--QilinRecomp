@@ -56,6 +56,11 @@ struct Conventions {
     // the stack-balance check is skipped. The generated code follows esp at
     // run time either way; callers still check where they're returned to.
     std::set<uint32_t> stack_glue;
+    // Helpers that can return past their caller: on an error path they jump
+    // to glue that drops their own return address, run on in their caller's
+    // code and return to its caller. A call to one accepts that return: with
+    // esp back where its caller's `ret` would leave it, the caller returns too.
+    std::set<uint32_t> returns_past_caller;
 };
 
 class Lifter {
