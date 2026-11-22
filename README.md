@@ -39,6 +39,10 @@ The [Actions](https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/ac
 
 From a clone of this repository with Visual Studio 2022, **`Play Wild Horse Rescue.bat`** builds and starts the game the same way, and **`Update Wild Horse Rescue.bat`** pulls the latest code first (`tools/build-wildhorse.ps1`).
 
+## Playing on Linux and macOS
+
+From a clone of this repository, with CMake 3.25 and GCC 14 or Clang 19 (Xcode 16 on macOS; on Linux, the SDL packages under "Building" below), run `tools/build-wildhorse.sh <disc folder> --run`. It builds the recompiler, recompiles your own `default.xbe`, builds the game and starts it; after a `git pull`, run it again (with no folder it uses the last one) and only what changed is rebuilt. The game is `build-game/qilin_run "<disc folder>"`.
+
 ## Analysing your copy (Windows, double-click)
 
 With Visual Studio 2022 (17.10 or newer, the free Community edition, with "Desktop development with C++") and Git installed, double-click **`Analyse game.bat`** in the project's folder. It builds the `qilin` tool, asks for your disc image (or `default.xbe` in an extracted disc's folder) and writes what it finds to `analysis-out\`: the disc's file list, the executable's summary and SHA-256, its kernel imports, its functions, the byte accounting. That folder is derived from the game and is never committed.
