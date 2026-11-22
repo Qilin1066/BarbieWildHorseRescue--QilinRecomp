@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-22
+
+Faster guest memory, and a build script for Linux and macOS.
+
+### Changed
+- Lifted code no longer bounds-checks each guest memory access. Every guest address lies inside the 4 GB reservation, so an access to memory that isn't mapped faults; a fault handler (signals on Linux and macOS, a vectored exception handler on Windows) turns it into the same stop a checked access gave, naming the guest address. Faults outside guest memory go to whatever handled them before. `-DQILIN_CHECKED_MEMORY=ON` restores the per-access checks; it governs `qilin_run` and the player kit alike.
+- The documentation's open questions are answered and its stale passages brought up to date.
+
+### Added
+- `tools/build-wildhorse.sh`: on Linux and macOS, checks your disc folder, lifts your own `default.xbe`, builds `qilin_run` and, with `--run`, starts it. It works from a clone of this repository; there is no prebuilt download for these systems, since lifting needs a C++ compiler on the player's machine and the Windows kit is the only one that bundles one.
+
 ## [0.14.0] - 2026-11-22
 
 Every trail runs.
