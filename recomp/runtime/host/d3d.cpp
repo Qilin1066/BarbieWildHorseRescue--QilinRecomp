@@ -331,6 +331,38 @@ void run_vblanks(rt::Context& c, Device& d, uint32_t until, bool swap_done) {
 // QueryPerformanceCounter at start-up, 0xF6010), and its updates scale by
 // that step. So there is nothing to replace: at any frame rate the game moves
 // by the time that passed, as the runtime's rdtsc follows the host's clock.
+// Debugging aids for exploring the game in scripted runs (docs/runtime.md):
+// QILIN_DUMP_RAM=frame,file writes guest memory to a file at that frame
+// (to find where the game keeps something by comparing two dumps), and
+// QILIN_POKE=frame:addr=value[,addr=value...] (hexadecimal, 32-bit words)
+// writes guest memory once at that frame (to unlock a place the script
+// can't reach yet). Neither is set in normal use.
+void debug_memory(rt::Context& c, const Device& d) {
+    static const char* dump = std::getenv("QILIN_DUMP_RAM");
+    static const char* poke = std::getenv("QILIN_POKE");
+    if (dump && d.frames_shown == std::strtoull(dump, nullptr, 10)) {
+        const char* comma = std::strchr(dump, ',');
+        if (!comma) unmodelled("QILIN_DUMP_RAM", "a value without ,file");
+        FILE* f = std::fopen(comma + 1, "wb");
+        if (!f || std::fwrite(c.mem, 1, c.mem_size, f) != c.mem_size) unmodelled("QILIN_DUMP_RAM", strf("writing %s", comma + 1));
+        std::fclose(f);
+    }
+    if (poke && d.frames_shown >= std::strtoull(poke, nullptr, 10)) {
+        const char* p = std::strchr(poke, ':');
+        if (!p) unmodelled("QILIN_POKE", "a value without frame:");
+        for (++p; *p;) {
+            char* end = nullptr;
+            const uint32_t addr = uint32_t(std::strtoul(p, &end, 16));
+            if (*end != '=') unmodelled("QILIN_POKE", "an entry without addr=value");
+            const uint32_t value = uint32_t(std::strtoul(end + 1, &end, 16));
+            rt::st32(mem(c), addr, value, 0);
+            p = *end == ',' ? end + 1 : end;
+            if (*end && *end != ',') unmodelled("QILIN_POKE", "entries not separated by commas");
+        }
+        poke = nullptr;
+    }
+}
+
 // Waiting for the next frame, at the end of Swap. Original: the console's
 // vblank after the game's presentation interval, by the clock, as the
 // console's Swap waits. 60: sixty frames a second by the clock (fewer on a
@@ -350,6 +382,7 @@ void run_vblanks(rt::Context& c, Device& d, uint32_t until, bool swap_done) {
 // the acquire: the processor is held a millisecond or so at most.
 constexpr auto kYield = std::chrono::milliseconds(2);
 void frame_pacing(rt::Context& c, Device& d) {
+    debug_memory(c, d);
     using Rate = platform::Settings::FrameRate;
     using Clock = std::chrono::steady_clock;
     if (d.frame_rate == Rate::Original) {

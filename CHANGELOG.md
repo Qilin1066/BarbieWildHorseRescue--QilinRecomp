@@ -4,6 +4,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-22
+
+Every trail runs.
+
+### Added
+- `QILIN_DUMP_RAM=frame,file` and `QILIN_POKE=frame:addr=value,...`: write guest memory to a file, or words into it, at a frame of a scripted run (`docs/runtime.md`). With them all nine trails were reached from the yard without playing the stables' tutorial (the game's array of unlocked trails at `0x266000`, and the stables' trail triggers widened): Forest Trail 1 to 3, Snowy Mountains Trail 1 to 3 and Shoreline Trail 1 to 3 each load and are ridden for about 3,000 frames without a stop or anything the runtime reports.
+
 ## [0.13.0] - 2026-11-22
 
 The enhancements act on this game, and there is a Windows download.

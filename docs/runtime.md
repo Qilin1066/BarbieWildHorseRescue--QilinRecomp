@@ -35,6 +35,11 @@ With `--virtual-time` the clock moves only as the guest does:
 
 The result: two runs with the same presses give the same frames, pixel for pixel (2,400 frames from power-on to the title screen, intro movie included, checked in v0.10.0). Press scripts written for a real-time run don't carry over (loading takes fewer frames in virtual time: the costs are guesses at the console's speed, not measurements), but once written they land every time. It is also what the differential test and frame-hash regression tests will need. A run is a little slower than real time on the cloud workspace's software renderer (2,400 frames in about 95 s).
 
+## Reaching places a script can't yet (v0.14.0)
+Two debugging aids for scripted runs, set in the environment and never in normal use. `QILIN_DUMP_RAM=frame,file` writes all of guest memory to a file at that frame; comparing two dumps finds where the game keeps something (a counter, a position, a flag). `QILIN_POKE=frame:addr=value[,addr=value…]` (hexadecimal, 32-bit words) writes guest memory once at that frame. With virtual time the game's heap is laid out the same way every run, so an address found once stays valid for the same presses.
+
+This is how every trail was reached (v0.14.0) without playing the stables' tutorial: the game keeps which trails are unlocked in an array of words at `0x266000`, indexed by level (2 is Forest Trail 1 … 10 is Shoreline Trail 3; the check is at `0xCF27D`), and the stables' level triggers, read from the stables' script, as records 0x60 bytes apart from `0x18D18C0` (Forest Trail 1's; position, then the radius squared at +0x14 and the radius at +0x18). Unlocking a trail and widening its trigger at frame 5600 of the yard script brings up "Do you want to explore …?" in the yard; A loads the trail. `CLAUDE.md` has the presses.
+
 ## End-to-end tests without the game
 `recomp/tests/make_test_xbe.cpp` writes small hand-assembled Xbox programs as XBE files. CMake lifts each with `qilin lift`, builds it with `run.cpp` and the runtime exactly as the game is built (`qilin_add_program`), and CTest runs it:
 
