@@ -85,7 +85,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 
 ## Next steps, in order
 
-1. Further into the game: out of the dressing room, the stables, the first ride (`--press` scripts the controller; the dressing room's outfit menu is where v0.8.x's runs stop going forward). **Read `docs/graphics.md` first.** Specular and two-sided lighting stop the runtime; `KickPushBuffer` is still to come. Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
+1. Further into the game: out of the dressing room, the stables, the first ride (`--press` scripts the controller; the dressing room's outfit menu is where v0.8.x's runs stop going forward). **Read `docs/graphics.md` first.** `KickPushBuffer` is still to come. Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
 2. DirectSound's 3D: lift the library's own 3D calculator as GBTGhoulies does (`kLiftedDsound` in its `recomp/src/main.cpp`), found here by name, and feed its results to the voices; until then 3D sounds are unpositioned. Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. `XMountMUA`/`XUnmountMU`.
 4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.

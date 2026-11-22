@@ -209,7 +209,17 @@ std::vector<uint32_t> combiners(const CombinerSetup& s) {
     Ps p;
     Builder& b = p.b;
 
-    const Id d0 = p.varying(kVaryD0), d1 = p.varying(kVaryD1), fog = p.varying(kVaryFog);
+    Id d0 = p.varying(kVaryD0), d1 = p.varying(kVaryD1);
+    const Id fog = p.varying(kVaryFog);
+    if (s.two_sided) {  // the back colours on the game's back faces
+        const Id ff_var = b.builtin_var(spv::Storage::Input, p.boolean, spv::builtin::FrontFacing);
+        p.interface.push_back(ff_var);
+        Id front = b.load(p.boolean, ff_var);
+        if (s.two_sided == 2) front = b.op(op::LogicalNot, p.boolean, {front});
+        const Id bv = b.t_bvec(4), pick = b.op(op::CompositeConstruct, bv, {front, front, front, front});
+        d0 = b.op(op::Select, p.v4, {pick, d0, p.varying(kVaryB0)});
+        d1 = b.op(op::Select, p.v4, {pick, d1, p.varying(kVaryB1)});
+    }
     Id t[4];
     for (uint32_t i = 0; i < 4; ++i) t[i] = p.varying(kVaryT0 + i);
     if (s.point_sprite) {

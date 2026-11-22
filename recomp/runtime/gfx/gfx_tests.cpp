@@ -294,6 +294,39 @@ mad oPos.xyz, oPos.xyzz, r1.x, c-37.xyzz
             const gfx::Image zi = r->read_back_buffer();
             CHECK(pixel_is(zi, 5, 5, 128, 128, 128, 128) || pixel_is(zi, 5, 5, 127, 127, 127, 127));
         }
+        // Two-sided lighting: oD0 = v3 (red) on the front, oB0 = v4 (green)
+        // on the back. The triangle above is clockwise on screen, the
+        // pipeline's front without culling; with two_sided 2 the game's front
+        // is the other winding.
+        {
+            gfx::vsh::Instruction mov_b0 = mov_d0;
+            mov_b0.a.index = 4;
+            mov_b0.out_address = gfx::vsh::kB0;
+            gfx::vsh::Instruction d0 = mov_d0;
+            d0.final = false;
+            gfx::vsh::Program two;
+            two.code = {mov_pos, d0, mov_b0};
+            const auto tvs = gfx::nv2a::vertex_program(two, 0b11001);
+            const float front_col[3][4] = {{1, 0, 0, 1}, {1, 0, 0, 1}, {1, 0, 0, 1}}, back_col[3][4] = {{0, 1, 0, 1}, {0, 1, 0, 1}, {0, 1, 0, 1}};
+            const float reversed[3][4] = {{0, 0, 0.5f, 1}, {0, 40, 0.5f, 1}, {40, 0, 0.5f, 1}};
+            for (uint32_t mode = 1; mode <= 2; ++mode) {
+                gfx::nv2a::CombinerSetup tcs = cs;
+                tcs.two_sided = mode;
+                const auto tfs = gfx::nv2a::combiners(tcs);
+                for (int flip = 0; flip < 2; ++flip) {
+                    gfx::DrawCmd t = d;
+                    t.vs_key = 4, t.vs_code = &tvs, t.fs_key = 10 + mode, t.fs_code = &tfs;
+                    t.inputs = 0b11001;
+                    t.attributes[0] = flip ? &reversed[0][0] : &pos[0][0];
+                    t.attributes[3] = &front_col[0][0];
+                    t.attributes[4] = &back_col[0][0];
+                    r->clear(nullptr, 0, gfx::kClearColor, black, 1, 0);
+                    r->draw(t);
+                    const bool facing = (flip == 0) == (mode == 1);
+                    CHECK(pixel_is(r->read_back_buffer(), 5, 5, facing ? 255 : 0, facing ? 0 : 255, 0, 255));
+                }
+            }
+        }
         // A texture: a 2x2 checker sampled by PASSTHRU-free PROJECT2D at texel centres.
         gfx::TextureData t;
         t.width = t.height = 2;

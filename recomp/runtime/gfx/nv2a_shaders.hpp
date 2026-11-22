@@ -56,6 +56,11 @@ struct CombinerSetup {
     // take the position within the point, (0, 0) top left to (1, 1), for
     // their texture coordinates; stage 3 keeps its own.
     uint32_t point_sprite = 0;
+    // Two-sided lighting (the GPU's method 0x17C4): v0 and v1 are the back
+    // colours (kVaryB0, kVaryB1) on triangles facing away. 0 off, 1 when the
+    // pipeline's front faces (gl_FrontFacing) are the game's, 2 when they
+    // are its back faces (the pipeline's front face follows the cull mode).
+    uint32_t two_sided = 0;
 
     bool operator==(const CombinerSetup&) const = default;
     uint64_t hash() const;

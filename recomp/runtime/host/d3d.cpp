@@ -2232,40 +2232,62 @@ struct FixedFunction {
 // ---------------------------------------------------------------- fixed-function lighting
 // D3D 8's vertex lighting, in eye space, as the fixed-function program does
 // it (fixed_function_program) with its constants (lighting_constants):
-//   colour = E + A × (Ga + Σ atten·spot·La) + D × Σ atten·spot·max(N·L, 0)·Ld
-//   alpha  = D's alpha
-// E, A, D the emissive, ambient and diffuse colour sources (the material's,
-// or the vertex's diffuse or specular colour with D3DRS_COLORVERTEX, where
-// the vertex has one), Ga D3DRS_AMBIENT, the sum over the enabled lights:
-// directional, point and spot, attenuated by 1/(a0 + a1·d + a2·d²) and cut
-// off beyond their range (not directional ones), spot lights by
-// ((ρ − cos φ/2) / (cos θ/2 − cos φ/2))^falloff clamped to [0, 1]. Normals go
+//   colour   = E + A × (Ga + Σ atten·spot·La) + D × Σ atten·spot·max(N·L, 0)·Ld
+//   alpha    = D's alpha
+//   specular = S × Σ atten·spot·Ls·(N·H)^P where N·L > 0 (D3DRS_SPECULARENABLE)
+// E, A, D, S the emissive, ambient, diffuse and specular colour sources (the
+// material's, or the vertex's diffuse or specular colour with
+// D3DRS_COLORVERTEX, where the vertex has one), Ga D3DRS_AMBIENT, P the
+// material's power, the sum over the enabled lights: directional, point and
+// spot, attenuated by 1/(a0 + a1·d + a2·d²) and cut off beyond their range
+// (not directional ones), spot lights by ((ρ − cos φ/2) / (cos θ/2 −
+// cos φ/2))^falloff clamped to [0, 1]. H is the half vector between the
+// direction to the light and to the viewer: with D3DRS_LOCALVIEWER the
+// vertex's own (towards the eye), else (0, 0, −1), which is what this
+// build's runtime writes for a directional light (0x171322: z − 1.0 before
+// normalising; Microsoft's PC documentation writes +z). The GPU raises N·H
+// to the power through a curve the runtime fits to P (0x16B380, method
+// 0x9E0); here it is the power itself (LIT, clamped to ±128). Normals go
 // through the inverse transpose of world × view, normalised with
-// D3DRS_NORMALIZENORMALS; lights through the view. The result is clamped
-// (the translator clamps oD0). Specular lighting (D3DRS_SPECULARENABLE with
-// lighting on), two-sided lighting and vertex blending stop the runtime.
+// D3DRS_NORMALIZENORMALS; lights through the view. The results are clamped
+// (the translator clamps its colour outputs).
+//
+// Two-sided lighting (D3DRS_TWOSIDEDLIGHTING) lights the back with the
+// normal reversed, the back material (+0xF34), D3DRS_BACKAMBIENT and the
+// back sources, into oB0 and oB1, which the pixel stage takes for
+// triangles facing away (D3DRS_FRONTFACE's winding is the front: this
+// build's SetRenderState_FrontFace writes it to the GPU as it is, 0x1690F0).
+// Vertex blending stops the runtime.
 //
 // The device keeps the material at +0xEF0 (D3DMATERIAL8: diffuse, ambient,
-// specular, emissive, power), the lights in an array of 0x90-byte records at
-// [+0x7A0] (D3DLIGHT8 first), and the enabled ones in eight slots at +0x7A8
-// (pointers to their records), as this build's SetMaterial (0x1671E0),
-// SetLight (0x167D80) and LightEnable (0x168040) keep them.
-constexpr uint32_t kRsSpecularEnable = 103, kRsColorVertex = 105, kRsDiffuseMaterialSource = 111,
-                   kRsAmbientMaterialSource = 112, kRsEmissiveMaterialSource = 113, kRsAmbient = 115, kRsTwoSidedLighting = 141,
-                   kRsNormalizeNormals = 142;
-constexpr uint32_t kDevMaterial = 0xEF0, kDevLightSlots = 0x7A8;
+// specular, emissive, power) and the back material after it at +0xF34, the
+// lights in an array of 0x90-byte records at [+0x7A0] (D3DLIGHT8 first), and
+// the enabled ones in eight slots at +0x7A8 (pointers to their records), as
+// this build's SetMaterial (0x1671E0), SetLight (0x167D80), LightEnable
+// (0x168040) and its lighting set-up (0x170D60, 0x170E50, 0x171010) keep and
+// read them.
+constexpr uint32_t kRsSpecularEnable = 103, kRsLocalViewer = 104, kRsColorVertex = 105, kRsBackSpecularMaterialSource = 106,
+                   kRsBackDiffuseMaterialSource = 107, kRsBackAmbientMaterialSource = 108, kRsBackEmissiveMaterialSource = 109,
+                   kRsSpecularMaterialSource = 110, kRsDiffuseMaterialSource = 111, kRsAmbientMaterialSource = 112,
+                   kRsEmissiveMaterialSource = 113, kRsBackAmbient = 114, kRsAmbient = 115, kRsTwoSidedLighting = 141,
+                   kRsNormalizeNormals = 142, kRsFrontFace = 146;
+constexpr uint32_t kDevMaterial = 0xEF0, kDevBackMaterial = 0xF34, kDevLightSlots = 0x7A8;
 constexpr uint32_t kLightPoint = 1, kLightSpot = 2, kLightDirectional = 3;
-// The program's constants: c26-c28 the normal matrix's rows, c29 Ga, c30-c32
-// the material's diffuse, ambient and emissive, c34 (0, 1, 0, 0), and from
-// c60 seven a light: position (or the direction to it), the direction to
-// it for a spot, diffuse, ambient, specular, (a0, a1, a2, range),
-// (cos φ/2, 1/(cos θ/2 − cos φ/2), falloff, 0).
-constexpr uint8_t kCNormal = 26, kCAmbient = 29, kCMaterial = 30, kCZeroOne = 34, kCLights = 60, kCPerLight = 7;
+// The program's constants: c26-c28 the normal matrix's rows, c29 Ga, c30-c33
+// the material's diffuse, ambient, emissive and specular, c34 (0, 1, 0, 0),
+// c35 (front power, back power, 0, −1), c36 the back's Ga, c37-c40 the back
+// material, and from c60 eight a light: position (or the direction to it),
+// the direction to it for a spot, diffuse, ambient, specular, (a0, a1, a2,
+// range), (cos φ/2, 1/(cos θ/2 − cos φ/2), falloff, 0), the half vector of a
+// directional light without a local viewer.
+constexpr uint8_t kCNormal = 26, kCAmbient = 29, kCMaterial = 30, kCZeroOne = 34, kCPower = 35, kCBackAmbient = 36, kCBackMaterial = 37,
+                  kCLights = 60, kCPerLight = 8;
 
 struct Lighting {
-    bool on = false, normalize = false;
-    uint8_t diffuse = 0, ambient = 0, emissive = 0;  // sources: 0 the material, 1 the vertex's diffuse (v3), 2 its specular (v4)
-    std::vector<uint32_t> lights;                    // enabled lights' records, in slot order
+    bool on = false, normalize = false, specular = false, local_viewer = false, two_sided = false;
+    // Sources, front then back: 0 the material, 1 the vertex's diffuse (v3), 2 its specular (v4).
+    uint8_t diffuse[2] = {}, ambient[2] = {}, emissive[2] = {}, specular_source[2] = {};
+    std::vector<uint32_t> lights;  // enabled lights' records, in slot order
     std::vector<uint8_t> types;
 };
 
@@ -2274,8 +2296,8 @@ Lighting lighting_of(const rt::Context& c, const char* fn, uint32_t fvf) {
     Lighting l;
     if (!rs(kRsLighting)) return l;
     l.on = true;
-    if (rs(kRsSpecularEnable)) unmodelled(fn, "specular lighting (D3DRS_SPECULARENABLE with D3DRS_LIGHTING)");
-    if (rs(kRsTwoSidedLighting)) unmodelled(fn, "two-sided lighting (D3DRS_TWOSIDEDLIGHTING)");
+    l.specular = rs(kRsSpecularEnable) != 0;
+    l.two_sided = rs(kRsTwoSidedLighting) != 0;
     l.normalize = rs(kRsNormalizeNormals) != 0;
     const bool colour_vertex = rs(kRsColorVertex) != 0;
     auto source = [&](uint32_t state) -> uint8_t {
@@ -2285,7 +2307,10 @@ Lighting lighting_of(const rt::Context& c, const char* fn, uint32_t fvf) {
         if (v == 2 && !(fvf & 0x80u)) return 0;  // no specular colour
         return uint8_t(v);
     };
-    l.diffuse = source(kRsDiffuseMaterialSource), l.ambient = source(kRsAmbientMaterialSource), l.emissive = source(kRsEmissiveMaterialSource);
+    l.diffuse[0] = source(kRsDiffuseMaterialSource), l.ambient[0] = source(kRsAmbientMaterialSource);
+    l.emissive[0] = source(kRsEmissiveMaterialSource), l.specular_source[0] = source(kRsSpecularMaterialSource);
+    l.diffuse[1] = source(kRsBackDiffuseMaterialSource), l.ambient[1] = source(kRsBackAmbientMaterialSource);
+    l.emissive[1] = source(kRsBackEmissiveMaterialSource), l.specular_source[1] = source(kRsBackSpecularMaterialSource);
     for (uint32_t k = 0; k < 8; ++k) {
         const uint32_t rec = ld(c, kDeviceStorage + kDevLightSlots + 4 * k);
         if (!rec) continue;
@@ -2294,6 +2319,8 @@ Lighting lighting_of(const rt::Context& c, const char* fn, uint32_t fvf) {
         l.lights.push_back(rec);
         l.types.push_back(uint8_t(type));
     }
+    // The runtime sets the local viewer only with lights enabled (0x1711BB).
+    l.local_viewer = rs(kRsLocalViewer) != 0 && !l.lights.empty();
     if (!l.lights.empty() && !(fvf & 0x10u)) unmodelled(fn, strf("lights on vertices without normals (FVF %#x)", fvf));
     return l;
 }
@@ -2321,13 +2348,21 @@ void lighting_constants(const rt::Context& c, const Lighting& l, float* out) {
             inv[i][j] = (wv[a0][b0] * wv[a1][b1] - wv[a0][b1] * wv[a1][b0]) * id;  // the adjugate's cofactor, transposed
         }
     for (int j = 0; j < 3; ++j) set(uint32_t(kCNormal + j), float(inv[j][0]), float(inv[j][1]), float(inv[j][2]), 0.0f);
-    const uint32_t ga = ld(c, kRenderStateTable + 4 * kRsAmbient);
-    set(kCAmbient, float((ga >> 16) & 0xFF) / 255.0f, float((ga >> 8) & 0xFF) / 255.0f, float(ga & 0xFF) / 255.0f, 0.0f);
-    const uint32_t mat = kDeviceStorage + kDevMaterial;
-    set(kCMaterial, f(mat), f(mat + 4), f(mat + 8), f(mat + 12));                // diffuse
-    set(kCMaterial + 1, f(mat + 16), f(mat + 20), f(mat + 24), f(mat + 28));     // ambient
-    set(kCMaterial + 2, f(mat + 48), f(mat + 52), f(mat + 56), f(mat + 60));     // emissive
+    auto colour = [&](uint32_t reg, uint32_t state) {
+        const uint32_t x = ld(c, kRenderStateTable + 4 * state);
+        set(reg, float((x >> 16) & 0xFF) / 255.0f, float((x >> 8) & 0xFF) / 255.0f, float(x & 0xFF) / 255.0f, 0.0f);
+    };
+    colour(kCAmbient, kRsAmbient), colour(kCBackAmbient, kRsBackAmbient);
+    // D3DMATERIAL8: diffuse, ambient, specular, emissive (four floats each), power.
+    auto material = [&](uint32_t reg, uint32_t m) {
+        set(reg, f(m), f(m + 4), f(m + 8), f(m + 12));                // diffuse
+        set(reg + 1, f(m + 16), f(m + 20), f(m + 24), f(m + 28));     // ambient
+        set(reg + 2, f(m + 48), f(m + 52), f(m + 56), f(m + 60));     // emissive
+        set(reg + 3, f(m + 32), f(m + 36), f(m + 40), f(m + 44));     // specular
+    };
+    material(kCMaterial, kDeviceStorage + kDevMaterial), material(kCBackMaterial, kDeviceStorage + kDevBackMaterial);
     set(kCZeroOne, 0.0f, 1.0f, 0.0f, 0.0f);
+    set(kCPower, f(kDeviceStorage + kDevMaterial + 64), f(kDeviceStorage + kDevBackMaterial + 64), 0.0f, -1.0f);
     for (size_t i = 0; i < l.lights.size(); ++i) {
         const uint32_t rec = l.lights[i], b = uint32_t(kCLights + kCPerLight * i);
         // D3DLIGHT8: Type, Diffuse, Specular, Ambient, Position, Direction,
@@ -2340,10 +2375,10 @@ void lighting_constants(const rt::Context& c, const Lighting& l, float* out) {
             de[j] = dx * v[0][j] + dy * v[1][j] + dz * v[2][j];
         }
         const double dl = std::sqrt(de[0] * de[0] + de[1] * de[1] + de[2] * de[2]), dn = dl > 0 ? -1.0 / dl : 0.0;
-        const float to_light[3] = {float(de[0] * dn), float(de[1] * dn), float(de[2] * dn)};
-        if (l.types[i] == kLightDirectional) set(b, to_light[0], to_light[1], to_light[2], 0.0f);
+        const double to_light[3] = {de[0] * dn, de[1] * dn, de[2] * dn};
+        if (l.types[i] == kLightDirectional) set(b, float(to_light[0]), float(to_light[1]), float(to_light[2]), 0.0f);
         else set(b, float(pe[0]), float(pe[1]), float(pe[2]), 1.0f);
-        set(b + 1, to_light[0], to_light[1], to_light[2], 0.0f);
+        set(b + 1, float(to_light[0]), float(to_light[1]), float(to_light[2]), 0.0f);
         set(b + 2, f(rec + 4), f(rec + 8), f(rec + 12), f(rec + 16));
         set(b + 3, f(rec + 36), f(rec + 40), f(rec + 44), f(rec + 48));
         set(b + 4, f(rec + 20), f(rec + 24), f(rec + 28), f(rec + 32));
@@ -2351,11 +2386,16 @@ void lighting_constants(const rt::Context& c, const Lighting& l, float* out) {
         const double cos_inner = std::cos(0.5 * f(rec + 0x60)), cos_outer = std::cos(0.5 * f(rec + 0x64));
         const double span = cos_inner - cos_outer;
         set(b + 6, float(cos_outer), float(span > 1e-6 ? 1.0 / span : 1e6), f(rec + 0x50), 0.0f);
+        // The half vector towards (0, 0, −1), as the runtime writes it.
+        const double h[3] = {to_light[0], to_light[1], to_light[2] - 1.0};
+        const double hl = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]), hn = hl > 0 ? 1.0 / hl : 0.0;
+        set(b + 7, float(h[0] * hn), float(h[1] * hn), float(h[2] * hn), 0.0f);
     }
 }
 
-// Appends lighting_of's lighting to a fixed-function program: oD0 from the
-// lights (temporaries r0 and r5-r11, r1 for the ILU).
+// Appends lighting_of's lighting to a fixed-function program: oD0 and, with
+// specular lighting, oD1 from the lights; with two-sided lighting oB0 and
+// oB1 too (temporaries r0 and r2-r11, r1 for the ILU).
 void lighting_program(gfx::vsh::Program& p, const Lighting& l) {
     using namespace gfx::vsh;
     struct Arg {
@@ -2402,10 +2442,9 @@ void lighting_program(gfx::vsh::Program& p, const Lighting& l) {
         if (a.c >= 0) in.constant = uint8_t(a.c);
         p.code.push_back(in);
     };
-    auto source = [&](uint8_t which, int material) { return which == 0 ? k(material) : v(which == 1 ? 3 : 4); };
-    const Arg D = source(l.diffuse, kCMaterial), A = source(l.ambient, kCMaterial + 1), E = source(l.emissive, kCMaterial + 2);
     const bool positional = std::ranges::any_of(l.types, [](uint8_t t) { return t != kLightDirectional; });
-    if (positional)
+    const bool specular = l.specular && !l.lights.empty();
+    if (positional || (specular && l.local_viewer))
         for (uint8_t row = 0; row < 3; ++row) mac(Mac::Dp4, 5, row == 0 ? "x" : row == 1 ? "y" : "z", v(0), k(4 + row));  // r5: eye position
     if (!l.lights.empty()) {
         for (uint8_t row = 0; row < 3; ++row) mac(Mac::Dp3, 6, row == 0 ? "x" : row == 1 ? "y" : "z", v(2), k(kCNormal + row));  // r6: eye normal
@@ -2415,47 +2454,100 @@ void lighting_program(gfx::vsh::Program& p, const Lighting& l) {
             mac(Mac::Mul, 6, "xyz", r(6), r(1, "x"));
         }
     }
-    mac(Mac::Mov, 7, "xyz", k(kCAmbient));      // r7: the ambient sum, from Ga
-    mac(Mac::Mov, 8, "xyz", k(kCZeroOne, "x"));  // r8: the diffuse sum
-    for (size_t i = 0; i < l.lights.size(); ++i) {
-        const int b = kCLights + kCPerLight * int(i);
-        if (l.types[i] == kLightDirectional) {
-            mac(Mac::Dp3, 10, "x", r(6), k(b));                   // N·L
-            mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
-            mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));  // + Ld·max(N·L, 0)
-            mac(Mac::Add, 7, "xyz", r(7), k(b + 3));              // + La
-            continue;
-        }
-        mac(Mac::Add, 9, "xyz", k(b), neg(r(5)));            // r9: to the light
-        mac(Mac::Dp3, 10, "yz", r(9), r(9));                 // d²
-        ilu(Ilu::Rsq, "yw", r(10, "y"));                     // 1/d
-        mac(Mac::Dst, 10, "xyzw", r(10), r(1));              // r10 = (1, d, d², 1/d)
-        mac(Mac::Mul, 9, "xyz", r(9), r(1, "w"));            // L
-        mac(Mac::Dp3, 11, "x", r(10), k(b + 5));             // a0 + a1·d + a2·d²
-        ilu(Ilu::Rcp, "x", r(11, "x"));
-        mac(Mac::Sge, 11, "y", k(b + 5, "w"), r(10, "y"));   // within the range
-        mac(Mac::Mul, 11, "x", r(1, "x"), r(11, "y"));       // r11.x: the attenuation
-        if (l.types[i] == kLightSpot) {
-            mac(Mac::Dp3, 10, "y", r(9), k(b + 1));          // ρ
-            mac(Mac::Add, 10, "y", r(10, "y"), neg(k(b + 6, "x")));
-            mac(Mac::Mul, 10, "y", r(10, "y"), k(b + 6, "y"));
-            mac(Mac::Max, 10, "y", r(10, "y"), k(kCZeroOne, "x"));
-            mac(Mac::Min, 10, "y", r(10, "y"), k(kCZeroOne, "y"));
-            mac(Mac::Mov, 10, "x", k(kCZeroOne, "y"));       // lit's x: 1
-            mac(Mac::Mov, 10, "w", k(b + 6, "z"));           // its power: the falloff
-            ilu(Ilu::Lit, "z", r(10));                       // r1.z = t^falloff
-            mac(Mac::Mul, 11, "x", r(11, "x"), r(1, "z"));
-        }
-        mac(Mac::Dp3, 10, "x", r(6), r(9));                  // N·L
-        mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
-        mac(Mac::Mul, 10, "x", r(10, "x"), r(11, "x"));
-        mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));
-        mac(Mac::Mad, 7, "xyz", k(b + 3), r(11, "x"), r(7));
+    if (specular && l.local_viewer) {  // r4: the direction to the eye, −r5 normalised
+        mac(Mac::Dp3, 4, "w", r(5), r(5));
+        ilu(Ilu::Rsq, "x", r(4, "w"));
+        mac(Mac::Mul, 4, "xyz", neg(r(5)), r(1, "x"));
     }
-    mac(Mac::Mul, 0, "xyz", A, r(7));
-    if (!l.lights.empty()) mac(Mac::Mad, 0, "xyz", D, r(8), r(0));
-    mac(Mac::Add, 0, "xyz", r(0), E, {}, kD0);
-    mac(Mac::Mov, 0, "w", Arg{sw(D.o, "w"), D.c}, {}, {}, kD0);
+    // N·H into r3.y, for the light whose direction to it is `to` (a unit vector).
+    auto half = [&](size_t i, Arg to) {
+        if (!l.local_viewer && l.types[i] == kLightDirectional) {
+            mac(Mac::Dp3, 3, "y", r(6), k(kCLights + kCPerLight * int(i) + 7));
+            return;
+        }
+        if (l.local_viewer) mac(Mac::Add, 3, "xyz", to, r(4));
+        else mac(Mac::Add, 3, "xyz", to, k(kCPower, "zzw"));  // + (0, 0, −1)
+        mac(Mac::Dp3, 3, "w", r(3), r(3));
+        ilu(Ilu::Rsq, "x", r(3, "w"));
+        mac(Mac::Dp3, 3, "y", r(6), r(3));
+        mac(Mac::Mul, 3, "y", r(3, "y"), r(1, "x"));
+    };
+    // The specular power of N·H where N·L > 0: r1.z (r3: N·L, N·H, -, P).
+    auto power = [&](int side, Arg n_dot_l) {
+        mac(Mac::Mov, 3, "x", n_dot_l);
+        mac(Mac::Mov, 3, "w", k(kCPower, side ? "y" : "x"));
+        ilu(Ilu::Lit, "z", r(3));
+    };
+    // One side's colours: the normal in r6 faces it.
+    auto side = [&](int sd) {
+        auto source = [&](uint8_t which, int material) { return which == 0 ? k(material) : v(which == 1 ? 3 : 4); };
+        const int m = sd ? kCBackMaterial : kCMaterial;
+        const Arg D = source(l.diffuse[sd], m), A = source(l.ambient[sd], m + 1), E = source(l.emissive[sd], m + 2),
+                  S = source(l.specular_source[sd], m + 3);
+        mac(Mac::Mov, 7, "xyz", k(sd ? kCBackAmbient : kCAmbient));  // r7: the ambient sum, from Ga
+        mac(Mac::Mov, 8, "xyz", k(kCZeroOne, "x"));                   // r8: the diffuse sum
+        if (specular) mac(Mac::Mov, 2, "xyz", k(kCZeroOne, "x"));     // r2: the specular sum
+        for (size_t i = 0; i < l.lights.size(); ++i) {
+            const int b = kCLights + kCPerLight * int(i);
+            if (l.types[i] == kLightDirectional) {
+                mac(Mac::Dp3, 10, "x", r(6), k(b));                   // N·L
+                if (specular) {
+                    half(i, k(b));
+                    power(sd, r(10, "x"));
+                    mac(Mac::Mad, 2, "xyz", k(b + 4), r(1, "z"), r(2));  // + Ls·(N·H)^P
+                }
+                mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
+                mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));  // + Ld·max(N·L, 0)
+                mac(Mac::Add, 7, "xyz", r(7), k(b + 3));              // + La
+                continue;
+            }
+            mac(Mac::Add, 9, "xyz", k(b), neg(r(5)));            // r9: to the light
+            mac(Mac::Dp3, 10, "yz", r(9), r(9));                 // d²
+            ilu(Ilu::Rsq, "yw", r(10, "y"));                     // 1/d
+            mac(Mac::Dst, 10, "xyzw", r(10), r(1));              // r10 = (1, d, d², 1/d)
+            mac(Mac::Mul, 9, "xyz", r(9), r(1, "w"));            // L
+            mac(Mac::Dp3, 11, "x", r(10), k(b + 5));             // a0 + a1·d + a2·d²
+            ilu(Ilu::Rcp, "x", r(11, "x"));
+            mac(Mac::Sge, 11, "y", k(b + 5, "w"), r(10, "y"));   // within the range
+            mac(Mac::Mul, 11, "x", r(1, "x"), r(11, "y"));       // r11.x: the attenuation
+            if (l.types[i] == kLightSpot) {
+                mac(Mac::Dp3, 10, "y", r(9), k(b + 1));          // ρ
+                mac(Mac::Add, 10, "y", r(10, "y"), neg(k(b + 6, "x")));
+                mac(Mac::Mul, 10, "y", r(10, "y"), k(b + 6, "y"));
+                mac(Mac::Max, 10, "y", r(10, "y"), k(kCZeroOne, "x"));
+                mac(Mac::Min, 10, "y", r(10, "y"), k(kCZeroOne, "y"));
+                mac(Mac::Mov, 10, "x", k(kCZeroOne, "y"));       // lit's x: 1
+                mac(Mac::Mov, 10, "w", k(b + 6, "z"));           // its power: the falloff
+                ilu(Ilu::Lit, "z", r(10));                       // r1.z = t^falloff
+                mac(Mac::Mul, 11, "x", r(11, "x"), r(1, "z"));
+            }
+            mac(Mac::Dp3, 10, "x", r(6), r(9));                  // N·L
+            if (specular) {
+                half(i, r(9));
+                power(sd, r(10, "x"));
+                mac(Mac::Mul, 10, "z", r(1, "z"), r(11, "x"));
+                mac(Mac::Mad, 2, "xyz", k(b + 4), r(10, "z"), r(2));
+            }
+            mac(Mac::Max, 10, "x", r(10, "x"), k(kCZeroOne, "x"));
+            mac(Mac::Mul, 10, "x", r(10, "x"), r(11, "x"));
+            mac(Mac::Mad, 8, "xyz", k(b + 2), r(10, "x"), r(8));
+            mac(Mac::Mad, 7, "xyz", k(b + 3), r(11, "x"), r(7));
+        }
+        const uint8_t colour = sd ? kB0 : kD0, spec = sd ? kB1 : kD1;
+        mac(Mac::Mul, 0, "xyz", A, r(7));
+        if (!l.lights.empty()) mac(Mac::Mad, 0, "xyz", D, r(8), r(0));
+        mac(Mac::Add, 0, "xyz", r(0), E, {}, colour);
+        mac(Mac::Mov, 0, "w", Arg{sw(D.o, "w"), D.c}, {}, {}, colour);
+        if (specular) {
+            mac(Mac::Mul, 0, "xyz", S, r(2), {}, spec);
+            mac(Mac::Mov, 0, "w", v(4, "w"), {}, {}, spec);  // the vertex's specular alpha (the fog's)
+        }
+    };
+    side(0);
+    if (l.two_sided) {
+        if (!l.lights.empty()) mac(Mac::Mov, 6, "xyz", neg(r(6)));  // the back faces the other way
+        side(1);
+    }
 }
 
 FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points) {
@@ -2489,8 +2581,10 @@ FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points
     const bool point_scale = points && rs(kRsPointScaleEnable);
     {  // the key: everything the program depends on
         std::vector<uint32_t> k = {fvf, fog_gen, uint32_t(points) | uint32_t(point_scale) << 1, uint32_t(transforms), uint32_t(transforms >> 32),
-                                   uint32_t(lit.on) | uint32_t(lit.normalize) << 1 | uint32_t(lit.diffuse) << 2 | uint32_t(lit.ambient) << 4 |
-                                       uint32_t(lit.emissive) << 6};
+                                   uint32_t(lit.on) | uint32_t(lit.normalize) << 1 | uint32_t(lit.diffuse[0]) << 2 | uint32_t(lit.ambient[0]) << 4 |
+                                       uint32_t(lit.emissive[0]) << 6 | uint32_t(lit.specular_source[0]) << 8 | uint32_t(lit.diffuse[1]) << 10 |
+                                       uint32_t(lit.ambient[1]) << 12 | uint32_t(lit.emissive[1]) << 14 | uint32_t(lit.specular_source[1]) << 16 |
+                                       uint32_t(lit.specular) << 18 | uint32_t(lit.local_viewer) << 19 | uint32_t(lit.two_sided) << 20};
         for (uint8_t t : lit.types) k.push_back(t);
         f.key = (hash_bytes(reinterpret_cast<const uint8_t*>(k.data()), k.size() * 4) & 0x0FFFFFFFFFFFFFFFull) | 0xF000000000000000ull;
     }
@@ -2530,8 +2624,10 @@ FixedFunction fixed_function_program(rt::Context& c, const char* fn, bool points
         lighting_program(f.program, lit);
     } else {
         mov(kD0, 3);  // the vertices' colours, or the registers' (absent_colour_registers)
+        if (rs(kRsTwoSidedLighting)) mov(kB0, 3), mov(kB1, 4);  // unlit: the same both sides
     }
-    mov(kD1, 4);
+    if (!lit.on || !lit.specular || lit.lights.empty()) mov(kD1, 4);  // else the lights' specular
+    if (lit.on && lit.two_sided && (!lit.specular || lit.lights.empty())) mov(kB1, 4);
     if (fog_gen == 0) {  // mov oFog.x, v4.w
         Instruction in;
         in.mac = Mac::Mov, in.a = input(4);
@@ -2924,6 +3020,20 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
     const FogUnit fog = fog_unit(c);
     cs.fog_mode = fog.mode;
     cs.point_sprite = prim == 1 && rs(kRsPointSpriteEnable);
+    // Two-sided lighting: the GPU colours triangles facing away with the
+    // back colours, its front being D3DRS_FRONTFACE's winding on screen
+    // (0x900 clockwise). The pipeline's front face is clockwise unless
+    // D3DCULL_CW culls clockwise ones (see the cull mode below).
+    // Only programs that write the back colours are modelled: the fixed-
+    // function one does (lighting_program); what the GPU shows on the back
+    // of a program that leaves them unwritten isn't known.
+    if (rs(kRsTwoSidedLighting)) {
+        const auto& vp = d.vs_programs[vs_key];
+        if (!std::ranges::any_of(vp.code, [](const gfx::vsh::Instruction& in) { return in.out_mask && !in.out_is_const && in.out_address == gfx::vsh::kB0; }))
+            unmodelled(fn, "two-sided lighting (D3DRS_TWOSIDEDLIGHTING) with a vertex program that doesn't write the back colours");
+        const bool pipeline_front_cw = rs(kRsCullMode) != 0x900, game_front_cw = rs(kRsFrontFace) != 0x901;
+        cs.two_sided = pipeline_front_cw == game_front_cw ? 1 : 2;
+    }
     fsu[gfx::nv2a::kFsFogParams * 4 + 0] = fog.p0;
     fsu[gfx::nv2a::kFsFogParams * 4 + 1] = fog.p1;
     for (uint32_t stage = 0; stage < 4; ++stage) {
