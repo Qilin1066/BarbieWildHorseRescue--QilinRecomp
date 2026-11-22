@@ -32,9 +32,10 @@ struct Language {
     uint32_t value;
     const char* name;
 };
-// The console's languages the disc has string tables for (docs/xbe-analysis.md). It also
-// has Dutch and UK English tables, which no console language setting names: how the
-// game chooses among them is to confirm.
+// The console's languages the disc has string tables for. This US build always loads
+// the US English table; the runtime gives it the one asked for here instead
+// (host/game_hooks.cpp). The disc's Dutch and UK English tables have no console
+// language. The voices are English whatever the text.
 constexpr Language kLanguages[] = {{1, "English"}, {3, "Deutsch"}, {4, "Fran\xc3\xa7" "ais"}, {5, "Espa\xc3\xb1ol"}, {6, "Italiano"}};
 
 }  // namespace

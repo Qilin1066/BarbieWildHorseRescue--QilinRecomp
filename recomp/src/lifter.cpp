@@ -1794,6 +1794,7 @@ std::string FnEmitter::run() {
 
     std::string fn = std::format("void {}(rt::Context& c) {{\n", Lifter::name(f_.start));
     fn += std::format("    QILIN_FRAME(0x{:X}u, c.esp);\n", f_.start);
+    if (conv_ && conv_->before_entry.contains(f_.start)) fn += std::format("    rt::before_entry(c, 0x{:X}u);\n", f_.start);
     fn += "    [[maybe_unused]] const rt::Mem m{c.mem, c.mem_size};\n";
     if (esp0_) fn += "    const uint32_t esp0_ = c.esp;\n";
     if (!gprs.empty()) fn += std::format("    uint32_t {};\n", gprs);

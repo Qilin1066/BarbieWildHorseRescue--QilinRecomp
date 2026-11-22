@@ -173,8 +173,8 @@ std::string settings_text(const Settings& s) {
          "# 0: the device's own (5.1 where it has six speakers), 2: stereo, 6: 5.1. From the next start.\n"
          "channels = " << s.channels << "\n\n";
     o << "[console]\n"
-         "# The Xbox's language, which the game reads: 1 English, 3 German, 4 French,\n"
-         "# 5 Spanish, 6 Italian. From the next start.\n"
+         "# The game's text: 1 English, 3 German, 4 French, 5 Spanish, 6 Italian\n"
+         "# (the disc's own tables; the voices stay English). From the next start.\n"
          "language = " << s.language << "\n";
     return o.str();
 }

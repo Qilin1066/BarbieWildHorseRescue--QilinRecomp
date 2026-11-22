@@ -66,6 +66,7 @@ uint64_t g_tsc = 0;
 uint64_t rdtsc(uint32_t) { return g_tsc += 1000; }
 // Enhancements' hooks change nothing in a test: the original has none.
 void after_return(Context&, uint32_t) {}
+void before_entry(Context&, uint32_t) {}
 void trace_write(uint32_t addr, uint32_t size) {
     g_writes.push_back(addr);
     g_writes.push_back(size);

@@ -66,6 +66,9 @@ struct Conventions {
     // game's own code whose results an enhancement adjusts, the projection
     // the engine builds for widescreen.
     std::set<uint32_t> after_return;
+    // And before (rt::before_entry, on entry, before the function reads its
+    // registers): where the game passes a value an enhancement replaces.
+    std::set<uint32_t> before_entry;
 };
 
 class Lifter {

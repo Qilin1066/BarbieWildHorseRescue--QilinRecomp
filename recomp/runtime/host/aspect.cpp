@@ -30,7 +30,6 @@
 namespace qilin::host {
 namespace {
 
-constexpr uint32_t kBuilder = 0xF2E60;     // the projection builder
 constexpr uint32_t kProjection = 0x28F5B0;  // float[4][4], row-major (row vectors: clip = v · M)
 constexpr uint32_t kViewport = 0x28F830;    // the viewport's matrix, by which the perspective was multiplied
 constexpr float k43 = 4.0f / 3.0f;
@@ -70,16 +69,11 @@ void set_game_aspect(const rt::Mem& m, float aspect, bool running) {
     if (running && g_have) write_widened(m);
 }
 
-}  // namespace qilin::host
-
-namespace qilin::rt {
-
-void after_return(Context& c, uint32_t fn) {
-    if (fn != host::kBuilder) trap(fn, "a function marked after_return that has no hook (host/aspect.cpp)");
-    const Mem m{c.mem, c.mem_size};
-    for (uint32_t i = 0; i < 16; ++i) host::g_built[i] = ld32(m, host::kProjection + 4 * i, 0);
-    host::g_have = true;
-    host::write_widened(m);
+void projection_built(rt::Context& c) {
+    const rt::Mem m{c.mem, c.mem_size};
+    for (uint32_t i = 0; i < 16; ++i) g_built[i] = rt::ld32(m, kProjection + 4 * i, 0);
+    g_have = true;
+    write_widened(m);
 }
 
-}  // namespace qilin::rt
+}  // namespace qilin::host

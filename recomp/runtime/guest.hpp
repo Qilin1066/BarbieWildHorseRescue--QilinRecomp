@@ -89,6 +89,8 @@ inline void check_return(const Context& c, uint32_t expect, uint32_t at) {
 // Native code the runtime runs after a lifted function returns
 // (Conventions::after_return): the lifted code calls it at each `ret`.
 void after_return(Context& c, uint32_t fn);
+// And before one runs (Conventions::before_entry), on entry.
+void before_entry(Context& c, uint32_t fn);
 
 // Indirect call or jump to a guest address (call [eax+0x14], jmp eax): the
 // lifted function at `target` from the generated table, else call_unlifted.

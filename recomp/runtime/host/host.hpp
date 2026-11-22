@@ -165,6 +165,7 @@ bool audio_surround();
 // The console's language the game reads (XC_LANGUAGE: 1 English, 3 German,
 // 4 French, 5 Spanish, 6 Italian).
 void set_console_language(uint32_t language);
+uint32_t console_language();
 // The console's widescreen setting (16:9) the game reads.
 void set_console_widescreen(bool widescreen);
 // The shape the game draws for (aspect.cpp): 4:3 is the console's 4:3
@@ -175,6 +176,8 @@ void set_console_widescreen(bool widescreen);
 constexpr float kMaxGameAspect = 4.0f;
 float game_aspect_ratio(float requested);  // what set_game_aspect makes of it: 0 → 16:9, clamped to 4:3–4
 void set_game_aspect(const rt::Mem& m, float aspect, bool running);
+// After the engine builds its projection (game_hooks.cpp): widens it.
+void projection_built(rt::Context& c);
 // The volume of what's played (0 to 1), and pausing the sound with the game
 // (the settings menu): nothing is mixed and the audio clock stands still.
 void set_output_volume(float volume);
@@ -200,6 +203,9 @@ void add_idle_hook(void (*hook)(rt::Context&));
 
 // This game's natively replaced functions (game_native.cpp), for the supported build only.
 void register_game_natives();
+// A file the game may ask for that the disc doesn't have, and the one in
+// the same folder that stands in for it (kernel_io.cpp).
+void add_disc_fallback(const std::string& missing, const std::string& stand_in);
 
 // XInput (xinput.cpp): the controller ports, over `input` (null: nothing plugged in).
 void register_xinput(platform::Input* input);

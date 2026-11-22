@@ -40,6 +40,10 @@ void register_game_natives() {
     register_hle(0x0EBDEC, "XAPI's kernel patch", xapi_patch_kernel);
     register_hle(0x115580, "the engine's cache flush", flush_caches);
     register_hle(0x150018, "OutputDebugStringA", output_debug_string_a);
+    // The German loading screen (the game asks for it when its language is
+    // German, which the settings can choose: game_hooks.cpp) is on European
+    // discs only; the US one stands in.
+    add_disc_fallback("loadingG.xbp", "Loading.xbp");
 }
 
 }  // namespace qilin::host

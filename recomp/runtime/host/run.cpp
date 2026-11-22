@@ -244,7 +244,9 @@ int main(int argc, char** argv) {
         static platform::Settings settings = platform::load_settings(data_folder);
         fullscreen = fullscreen || settings.fullscreen;
         if (!audio_channels) audio_channels = settings.channels;
-        // The picture's shape: the game's own 4:3 until its cameras are understood (aspect.cpp).
+        // The game's text language (game_hooks.cpp), and the console's.
+        host::set_console_language(settings.language);
+        // The picture's shape: 4:3, or wider with the game's cameras widened (aspect.cpp).
         const float aspect = host::game_aspect_ratio(platform::aspect_ratio(settings, headless ? 0.0f : platform::Window::main_screen_aspect()));
         host::set_game_aspect(m, aspect, false);
         d3d.settings = &settings;

@@ -132,6 +132,13 @@ void note_missing(const Resolved& r) {
         std::printf("qilin_run: %s isn't in the game folder\n", r.object.c_str());
 }
 
+// Files the disc doesn't have, and the file there that stands in for each
+// (add_disc_fallback): lower-case file name -> its stand-in's name.
+std::map<std::string, std::string>& disc_fallbacks() {
+    static std::map<std::string, std::string> f;
+    return f;
+}
+
 // An object name, relative to `root` (an object name too) if it isn't
 // absolute, through symbolic links to a device and a host path.
 std::optional<Resolved> resolve(std::string name, const std::string& root) {
@@ -170,6 +177,9 @@ std::optional<Resolved> resolve(std::string name, const std::string& root) {
             if (comp != ".") p = child(p, comp);
             at = end == std::string::npos ? rest.size() : end;
         }
+        if (!d.writable && !fs::exists(p, ec))
+            if (const auto it = disc_fallbacks().find(lower(p.filename().string())); it != disc_fallbacks().end())
+                p = child(p.parent_path(), it->second);
         r.host = p;
         return r;
     }
@@ -965,5 +975,7 @@ void register_kernel_io(const IoConfig& cfg) {
         register_hle(kernel_addr(e->ordinal), e->name, k.fn);
     }
 }
+
+void add_disc_fallback(const std::string& missing, const std::string& stand_in) { disc_fallbacks()[lower(missing)] = stand_in; }
 
 }  // namespace qilin::host
