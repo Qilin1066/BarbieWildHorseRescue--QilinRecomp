@@ -36,7 +36,7 @@ These are in the code as they were. Each is a property of that game's build that
 
 ## Checks
 - `ctest`: the unit tests (loader, decoder, CFG, lifter, runtime helpers, the disc reader with malformed images, SHA-256), the `qilin` tool run on the synthetic XBE, and the x87 transcendentals' fast paths against their slow paths.
-- `tools/check/verify_decoder.py`: Zydis against LLVM on `qilin insns` listings. Needs the game.
+- `tools/check/verify_decoder.py`: Zydis against LLVM on `qilin insns` listings. Needs the game. **Run on this game (v0.11.0, libLLVM 18):** all 500,668 reachable instructions agree in length and mnemonic; the linear sweep's 670,764 instructions show 417 disagreements, all on bytes that are data and all of known-benign classes (LLVM rejecting `bound`, `int1`, SAL /6 and the like; a lone prefix; encodings no Pentium III runs; and, new here, an F2/F3 prefix on a packed-single SSE opcode that has no form with it, which Zydis rejects and LLVM decodes without the prefix). The one far jump in reachable code (`0xEF4FD`) is in XAPI's function at `0xEF4E4`, which `qilin suspects` lists for changing the interrupt flag; no run has reached it. To run it: `qilin insns <game> -o reach.txt`, `qilin insns <game> --linear -o linear.txt`, `verify_decoder.py --reachable reach.txt --linear linear.txt` (about 4 s).
 - `tools/check/x87/rounding.py`, `transcendental.py`: the x87 arithmetic against exact rational results and mpmath. No game needed.
 
 ## Next

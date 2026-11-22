@@ -11,10 +11,13 @@ bytes to the same length and mnemonic (after mapping the two libraries' naming
 conventions). Any disagreement fails.
 
 Linear sweep (every byte of every code section, including data in them): the
-same rule, except three known-benign classes are reported rather than failed:
+same rule, except four known-benign classes are reported rather than failed:
 encodings LLVM's decoder rejects (undocumented aliases such as int1, SAL /6,
-TEST /1), LLVM returning a lone prefix byte, and encodings Zydis rightly
-rejects that no Pentium III could run (mov to CS, EVEX). Anything else fails.
+TEST /1), LLVM returning a lone prefix byte, encodings Zydis rightly rejects
+that no Pentium III could run (mov to CS, EVEX), and an F2/F3 prefix on a
+packed-single SSE instruction that has no form with it (F3 0F 55, F2 0F 53:
+Intel defines none; Zydis rejects them, LLVM drops the prefix). Anything else
+fails.
 Exit status 1 on failure, so this can gate CI.
 
 Needs libLLVM (any version >= 15) with the X86 target; found automatically
@@ -96,9 +99,13 @@ def equivalent(zm, lm):
 far = []  # far control transfers inside reachable code: data decoded as code
 
 
-def classify(zm, zlen, n, ltext):
+def classify(zm, zlen, n, ltext, code=b""):
     """Name a known-benign disagreement class, or None."""
     lm = llvm_mnemonic(ltext) if n else ""
+    if zm == "bad" and n and len(code) > 2 and code[0] in (0xF2, 0xF3) and code[1] == 0x0F and lm.endswith("ps"):
+        # A repeat prefix on a packed-single SSE opcode with no scalar or
+        # other form for it: undefined; LLVM decodes as if it weren't there.
+        return "zydis-rejects-undefined-prefix-on-sse:" + lm
     if n == 0:
         # LLVM rejects an encoding Zydis accepts: undocumented aliases and
         # instructions LLVM's i386 decoder omits (int1, bound, SAL /6, TEST /1...).
@@ -126,7 +133,7 @@ def check(path, reachable, dis, hard, benign, stats):
         if zm == "bad":
             if n != 0:
                 msg = f"{kind} {addr:08x}: Zydis can't decode {hexb}, LLVM gives {n} bytes '{ltext}'"
-                cat = None if reachable else classify(zm, 0, n, ltext)
+                cat = None if reachable else classify(zm, 0, n, ltext, code)
                 (benign[cat].append(msg) if cat else hard.append(msg))
             continue
         msg = None
