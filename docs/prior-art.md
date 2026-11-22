@@ -7,7 +7,7 @@
 2. XDK library functions named with XbSymbolDatabase (MIT) signatures; our own only where it lacks the game's XDK build.
 3. Guest registers in host locals inside each lifted function, a context struct at call boundaries.
 4. An unknown instruction or a decode failure is a build error; an unknown indirect target at run time is a trap with the address logged.
-5. The memory aliases the game uses are found during bring-up, and anything else traps in the checked build.
+5. The memory aliases the game uses are found during bring-up, and an access anywhere else stops the runtime naming the address (a fault handler, or every access checked with `QILIN_CHECKED_MEMORY`).
 6. x87 precision control honoured, transcendentals from a bundled implementation with the same bits on every host.
 7. The main loop's timing analysed early (fixed or variable step decides how high refresh rates are done).
 8. xemu running the original game is ground truth.
