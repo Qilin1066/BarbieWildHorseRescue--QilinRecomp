@@ -23,7 +23,7 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | The settings menu shared with the sister projects, and the settings file | ✅ carried over, under this game's name; `qilin_menu_preview` shows it over a test card |
 | Runtime: the kernel, the scheduler and the file system, natively; `qilin_run`, which starts at the lifted entry point | ✅ the game starts on it and runs into its engine (v0.6.0); three test programs go from XBE through the lifter to native programs and run in CI |
 | The controller library | ✅ natively, found by name in this XDK build, through the window |
-| DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; the movie's sound plays; 3D positioning recorded but not applied |
+| DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; the movie's sound plays; 3D positioning by the library's own calculator, lifted (v0.11.0) |
 | Direct3D | 🔨 natively over the renderer (v0.8.0), with fixed-function lighting (v0.9.0): the menus, the stable yard, the dressing room, the stables and the mini-games; specular and two-sided lighting (v0.11.0) |
 | The XMV movie player | ✅ lifted whole, through the video overlay (v0.8.0) |
 | Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |

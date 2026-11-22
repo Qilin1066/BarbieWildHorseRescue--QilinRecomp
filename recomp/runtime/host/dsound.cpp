@@ -6,9 +6,9 @@
 // DirectSound's own 3D positioning (SetPosition, SetVelocity, the distances,
 // the rolloff curve, the listener), play-cursor notifications, GetCaps and
 // GetSpeakerConfig. Functions are found by name in this build's symbols;
-// one the build doesn't have is simply not registered. The two parts that
-// rested on the other game's addresses (the head-related filter lookup, the
-// stream object's vtables) stop if this game ever reaches them.
+// one the build doesn't have is simply not registered. 3D (v0.11.0) runs the
+// library's own calculator, lifted, over its own blocks kept in guest memory
+// (see 3D); the stream object's vtables are this build's.
 //
 // In the sister game XACT, lifted, calls these. DirectSound on the Xbox
 // programs the APU's voice processor and runs effects on its DSP; here the
@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <cstdlib>
 #include <map>
@@ -107,8 +108,12 @@ struct Buffer {
     std::vector<Notify> notifies;
     uint32_t notify_pos = 0;
     bool notify_playing = false;
-    // DirectSound's own 3D settings for the buffer, kept as given.
-    float position[3] = {}, velocity[3] = {}, min_distance = 1.0f, max_distance = 1.0e9f;
+    // DirectSound's own 3D (a DSBCAPS_CTRL3D buffer or stream): the
+    // library's 3D block for the voice, in guest memory and its layout
+    // (0xA4 bytes: dirty flags, the DS3DBUFFER fields, the calculator's
+    // results, the HRTF source's state at +0x7C), and the voice data the
+    // calculator writes for it (0x38 bytes, a DS3DVOICEDATA) after it.
+    uint32_t block3d = 0;
     // A submix (DSBCAPS_MIXIN) buffer's status: it mixes whatever feeds it
     // from the moment it's made, but GetStatus reports it playing only
     // between a Play and a Stop of its own, as the original's does (the
@@ -130,6 +135,10 @@ struct DirectSound {
     uint32_t object = 0, refs = 0;
     std::map<uint32_t, std::unique_ptr<Buffer>> buffers;  // by guest address
     std::vector<uint32_t> spare_objects;                  // guest slots for object headers, free
+    std::vector<uint32_t> spare_3d;                       // guest slots for 3D blocks, free
+    // The listener's 3D block and the I3DL2 listener after it, as the
+    // original keeps them at its object's +0x30 and +0x80 (see 3D below).
+    uint32_t listener = 0;
     std::chrono::steady_clock::time_point epoch;
     platform::AudioOut* out = nullptr;  // the speakers, if there's a sound device
     uint64_t mixed = 0;  // output frames mixed so far
@@ -183,6 +192,30 @@ uint32_t guest_object(rt::Context& c) {
     return a;
 }
 void free_guest_object(uint32_t a) { ds().spare_objects.push_back(a); }
+// 256-byte slots, the same way, for a 3D voice's two blocks (0xA4 + 0x38).
+constexpr uint32_t k3dSlotBytes = 0x100, k3dVoiceData = 0xA4;
+uint32_t guest_3d_slot(rt::Context& c) {
+    std::vector<uint32_t>& spare = ds().spare_3d;
+    if (spare.empty()) {
+        const uint32_t page = contiguous(0x1000, 0, kPhysicalLimit - 1, 0x1000, 4);
+        if (!page) rt::trap(0, "DirectSound: out of guest memory for 3D blocks");
+        for (uint32_t at = 0x1000; at >= k3dSlotBytes; at -= k3dSlotBytes) spare.push_back(page + at - k3dSlotBytes);
+    }
+    const uint32_t a = spare.back();
+    spare.pop_back();
+    std::memset(c.mem + a, 0, k3dSlotBytes);
+    return a;
+}
+
+// DirectSound's own 3D (see 3D, below): the library's functions, its
+// speaker setting, and the templates its blocks start from.
+constexpr uint32_t kCalculate3D = 0x1A61E9, kGetVoiceData = 0x1A5224, kSetFullHrtf5Channel = 0x1A7981, kGetSpeakerConfig = 0x15089F;
+constexpr uint32_t kSpeakerConfigOverride = 0x1C1260, kSpeakerConfig = 0x1C125C;
+constexpr uint32_t kListenerTemplate = 0x1C0F4C, kI3dl2Template = 0x1C0F18, kBuffer3dTemplate = 0x1C0FB4, kHrtfSourceTemplate = 0x1C0F88;
+constexpr uint32_t kListenerI3dl2 = 0x50;  // the I3DL2 listener, from the listener block
+void make_3d(rt::Context& c, Buffer& b);
+void commit_all_3d(rt::Context& c);
+void set_reverb(rt::Context& c);
 
 Buffer& buffer(rt::Context& c, uint32_t a, const char* fn) {
     auto it = ds().buffers.find(a);
@@ -400,6 +433,26 @@ void direct_sound_create(rt::Context& c) {
     Lock lock_(ds().m);
     DirectSound& d = ds();
     if (!d.object) {
+        // The listener's 3D block and the I3DL2 listener's, as DirectSound's
+        // set-up makes them (0x1A6452), and the speaker setting the 3D
+        // calculator reads (0x1A6491: the override at 0x1C1260 if it holds
+        // one, else XAudioGetSpeakerConfig's, kept at 0x1C125C).
+        const uint32_t lis = guest_3d_slot(c);
+        st(c, lis, 0x3F);
+        for (uint32_t k = 0; k < 15; ++k) st(c, lis + 8 + 4 * k, ld(c, kListenerTemplate + 4 * k));
+        st(c, lis + kListenerI3dl2, 0xFFF);
+        for (uint32_t k = 0; k < 12; ++k) st(c, lis + kListenerI3dl2 + 4 + 4 * k, ld(c, kI3dl2Template + 4 * k));
+        d.listener = lis;
+        uint32_t speakers = ld(c, kSpeakerConfigOverride);
+        if ((speakers & 0xFFFF) > 2 || (speakers & 0xFFFC0000u)) {
+            lock_.unlock();  // guest code
+            const uint32_t saved[4] = {c.eax, c.ecx, c.edx, c.ebx};
+            call_guest(c, kGetSpeakerConfig, {});
+            speakers = c.eax;
+            c.eax = saved[0], c.ecx = saved[1], c.edx = saved[2], c.ebx = saved[3];
+            lock_.lock();
+        }
+        st(c, kSpeakerConfig, speakers);
         d.object = guest_object(c);
         d.epoch = host::clock::now();
         d.mem = c.mem, d.mem_size = c.mem_size;
@@ -452,6 +505,7 @@ void create_sound_buffer(rt::Context& c) {
     }
     b->voice.mix_bins = read_mix_bins(c, bins);
     b->voice.headroom = default_headroom(flags);
+    make_3d(c, *b);
     const uint32_t obj = guest_object(c);
     ds().buffers[obj] = std::move(b);
     st(c, out, obj);
@@ -467,6 +521,7 @@ void buffer_release(rt::Context& c) {
         catch_up(c);
         for (auto& [addr, other] : ds().buffers)
             if (other->output == a) unmodelled("IDirectSoundBuffer_Release", "releasing a submix buffer other buffers still feed");
+        if (b.block3d) ds().spare_3d.push_back(b.block3d);
         ds().buffers.erase(a);
         free_guest_object(a);
     }
@@ -572,51 +627,80 @@ BUFFER_SETTER(stop, 4, {
     else b.voice.stop();
 })
 
-// HRESULT Set3DVoiceData(LPDIRECTSOUNDBUFFER, LPCDS3DVOICEDATA): the 3D
-// calculator's results (the game runs DirectSound's own, lifted), as the
-// original (CDirectSoundVoice_Set3DVoiceData, 0x1C5E64) takes them: the
-// flags, then each field the flags name (bit 0 d1; 1 d2; 2 d3, d4; 3 d5,
-// d6; 4 d7, d8; 5 d9; 6 the head-related filter's two angles; 7 the 3D
-// filter's coefficients). The head-related filter's taps and interaural
-// delay come from the HRTF table the game selected (DirectSoundUseFullHRTF),
-// through the original's own lookup (the function at 0x1E3B88, lifted),
-// called before the mixer's lock is taken.
-// (Those are the sister game's addresses. This game doesn't call
-// Set3DVoiceData; the three are zero here and a 3D voice's angles stop the
-// runtime until this build's are located.)
-constexpr uint32_t kHrtfLookup = 0, kHrtfMode = 0, kHrtfAzimuthSplit = 0;
-void set_3d_voice_data(rt::Context& c) {
-    const char* fn = "Set3DVoiceData";
-    const uint32_t a = arg(c, 0), p = arg(c, 1);
-    const uint32_t flags = ld(c, p);
-    // The head-related filter, when the angles change.
-    bool hrtf = false;
+// ---------------------------------------------------------------- 3D
+// DirectSound's own 3D, as this build's library does it. The game sets a
+// 3D voice's position, velocity, distances and rolloff curve, and the
+// listener's parameters; at a commit the library runs its 3D calculator
+// (CDirectSound3DCalculator_Calculate3D 0x1A61E9, then _GetVoiceData
+// 0x1A5224) over its own blocks and programs the voice from the voice data
+// it gives (CMcpxVoiceClient_Commit3dSettings, 0x1AB2AA, then 0x1AB0A2).
+// Here the blocks are kept in guest memory in the library's layout, the
+// calculator runs lifted, and the voice data is applied natively:
+// - the listener (the DirectSound object's +0x30): dirty flags, a second
+//   flags word, DS3DLISTENER's fields from +8 (position, velocity, front,
+//   top, the distance, rolloff and Doppler factors), the calculator's own
+//   after; the I3DL2 listener at +0x50 from it (the object's +0x80): dirty
+//   flags (0xFFF), DSI3DL2LISTENER from +4. Both start as the library's
+//   templates make them (0x1C0F4C, 0x1C0F18; DirectSound's set-up 0x1A6452).
+// - a 3D voice's block (0xA4 bytes, its settings' +0xB4): dirty flags,
+//   DS3DBUFFER's fields from +8 (position +8, velocity +0x14, cone, minimum
+//   and maximum distance +0x38/+0x3C, mode +0x40), the voice's distance,
+//   rolloff and Doppler factors (+0x44-0x4C), the rolloff curve (+0x50,
+//   +0x54), the calculator's results, the HRTF source's state (+0x7C);
+//   templates 0x1C0FB4 and 0x1C0F88, every field dirty (0x1A65D0).
+// - its voice data (0x38 bytes, its settings' +0xB8): a DS3DVOICEDATA,
+//   applied as Set3DVoiceData applies one (below), then its flags cleared.
+// The setters write these as the library's do (CDirectSoundVoice_SetPosition
+// 0x1A5A85 and its neighbours) and commit the voice unless deferred; the
+// device's CommitDeferredSettings (0x1A64F4) runs the listener's part, every
+// 3D voice's, and clears the listener's flags.
+// (The library's addresses and templates: under 3D, below.)
+// The head-related filter (0x1AAA54): the lookup (0x1AA036: azimuth,
+// elevation, full table or not, two coefficient pointers out), the full
+// table with speaker setting 2 or bit 16 (0x1C125C), a disabled voice
+// (DS3DMODE_DISABLE) the coefficients at 0x1C110C on both ears, and the
+// delay the first table's byte 31 at azimuths from 0.0 (0x20B87C) on, else
+// the second's negated.
+constexpr uint32_t kHrtfLookup = 0x1AA036, kHrtfNone = 0x1C110C, kHrtfAzimuthSplit = 0x20B87C;
+
+struct Hrtf {
     uint8_t taps[2][31] = {};
     int32_t itd = 0;
-    if (flags & 0x40) {
-        if (!kHrtfLookup) unmodelled(fn, "the head-related filter (this build's HRTF lookup isn't located)");
-        const uint32_t lookup = ld(c, kHrtfLookup);
-        if (!lookup) unmodelled(fn, "a 3D voice's angles before the game has chosen an HRTF table");
-        const uint32_t mode = ld(c, kHrtfMode);
+};
+Hrtf hrtf_of(rt::Context& c, uint32_t azimuth, uint32_t elevation, bool disabled) {
+    uint32_t left = kHrtfNone, right = kHrtfNone;
+    if (!disabled) {
+        const uint32_t mode = ld(c, kSpeakerConfig);
         const uint32_t full = ((mode & 0xFFFF) == 2 || (mode & 0x10000)) ? 1 : 0;
-        const uint32_t azimuth = ld(c, p + 0x28), elevation = ld(c, p + 0x2C);
         const uint32_t esp = c.esp;
         c.esp -= 16;  // the two coefficient pointers it returns, on the guest's stack
         const uint32_t out = c.esp;
         const uint32_t saved[4] = {c.eax, c.ecx, c.edx, c.ebx};
-        call_guest(c, lookup, {azimuth, elevation, full, out});
+        call_guest(c, kHrtfLookup, {azimuth, elevation, full, out});
         c.eax = saved[0], c.ecx = saved[1], c.edx = saved[2], c.ebx = saved[3];
-        const uint32_t left = ld(c, out), right = ld(c, out + 4);
+        left = ld(c, out), right = ld(c, out + 4);
         c.esp = esp;
-        for (uint32_t k = 0; k < 31; ++k) {
-            taps[0][k] = rt::ld8(mem(c), left + k, 0);
-            taps[1][k] = rt::ld8(mem(c), right + k, 0);
-        }
-        // The delay: the first table's when the azimuth is past the split, else the second's, negated.
-        const float split = std::bit_cast<float>(ld(c, kHrtfAzimuthSplit));
-        itd = std::bit_cast<float>(azimuth) >= split ? int32_t(rt::ld8(mem(c), left + 31, 0)) : -int32_t(rt::ld8(mem(c), right + 31, 0));
-        hrtf = true;
     }
+    Hrtf h;
+    for (uint32_t k = 0; k < 31; ++k) {
+        h.taps[0][k] = rt::ld8(mem(c), left + k, 0);
+        h.taps[1][k] = rt::ld8(mem(c), right + k, 0);
+    }
+    const float split = std::bit_cast<float>(ld(c, kHrtfAzimuthSplit));
+    h.itd = std::bit_cast<float>(azimuth) >= split ? int32_t(rt::ld8(mem(c), left + 31, 0)) : -int32_t(rt::ld8(mem(c), right + 31, 0));
+    return h;
+}
+
+// A DS3DVOICEDATA at p for the buffer at a, as the original takes one
+// (CDirectSoundVoice_Set3DVoiceData; this build's programs a 3D voice the
+// same way, 0x1AB0A2): the flags, then each field the flags name (bit 0 d1;
+// 1 d2; 2 d3, d4; 3 d5, d6; 4 d7, d8; 5 d9; 6 the head-related filter's two
+// angles; 7 the 3D filter's coefficients). The head-related filter comes
+// from the original's lookup, called before the mixer's lock is taken.
+void apply_voice_data(rt::Context& c, uint32_t a, uint32_t p, bool disabled, const char* fn) {
+    const uint32_t flags = ld(c, p);
+    std::optional<Hrtf> hrtf;
+    if (flags & 0x40) hrtf = hrtf_of(c, ld(c, p + 0x28), ld(c, p + 0x2C), disabled);
     Lock lock_(ds().m);
     catch_up(c);
     Buffer& b = buffer(c, a, fn);
@@ -637,12 +721,68 @@ void set_3d_voice_data(rt::Context& c) {
     }
     if (hrtf) {
         audio::Voice3d& v = b.voice.three_d;
-        std::memcpy(v.taps, taps, sizeof taps);
-        v.itd = itd;
+        std::memcpy(v.taps, hrtf->taps, sizeof hrtf->taps);
+        v.itd = hrtf->itd;
         v.hrtf = true;
     }
     apply_3d(b);
+}
+
+// HRESULT Set3DVoiceData(LPDIRECTSOUNDBUFFER, LPCDS3DVOICEDATA): 3D voice
+// data the game computed itself (a title running the calculator its own
+// way); this game uses DirectSound's (above) and doesn't call it.
+void set_3d_voice_data(rt::Context& c) {
+    apply_voice_data(c, arg(c, 0), arg(c, 1), false, "Set3DVoiceData");
     ret(c, kDsOk, 8);
+}
+
+// A 3D voice's blocks, made as the library makes them (above), for a
+// DSBCAPS_CTRL3D buffer or stream; the voice applies its voice data.
+void make_3d(rt::Context& c, Buffer& b) {
+    if (!(b.flags & 0x10)) return;
+    const uint32_t blk = guest_3d_slot(c);
+    for (uint32_t k = 0; k < 18; ++k) st(c, blk + 8 + 4 * k, ld(c, kBuffer3dTemplate + 4 * k));
+    for (uint32_t k = 0; k < 9; ++k) st(c, blk + 0x80 + 4 * k, ld(c, kHrtfSourceTemplate + 4 * k));
+    st(c, blk, 0x7FF0000);
+    st(c, blk + 0x7C, 0x7F0000);
+    b.block3d = blk;
+    b.use_3d = true;
+}
+
+// Commits a 3D voice: the calculator over the listener and its block, its
+// voice data applied. Guest code runs: not under the mixer's lock.
+void commit_3d(rt::Context& c, uint32_t a, uint32_t blk) {
+    const uint32_t lis = ds().listener, data = blk + k3dVoiceData;
+    if (!ld(c, 0x1C1914)) unmodelled("CommitDeferredSettings", "3D before the game chose an HRTF table (DirectSoundUseFullHRTF)");
+    const uint32_t saved[4] = {c.eax, c.ecx, c.edx, c.ebx};
+    call_guest(c, kCalculate3D, {lis, blk});
+    call_guest(c, kGetVoiceData, {lis, blk, lis + kListenerI3dl2, blk + 0x7C, data});
+    c.eax = saved[0], c.ecx = saved[1], c.edx = saved[2], c.ebx = saved[3];
+    st(c, blk, 0);
+    st(c, blk + 0x7C, 0);
+    apply_voice_data(c, a, data, ld(c, blk + 0x40) == 2, "CommitDeferredSettings");
+    st(c, data, 0);
+}
+
+// The device's commit: the listener's part, every 3D voice, the listener's
+// and the I3DL2 listener's flags cleared.
+void commit_all_3d(rt::Context& c) {
+    const uint32_t lis = ds().listener;
+    if (!lis) return;
+    std::vector<std::pair<uint32_t, uint32_t>> voices;
+    {
+        Lock lock_(ds().m);
+        for (const auto& [addr, b] : ds().buffers)
+            if (b->block3d) voices.emplace_back(addr, b->block3d);
+    }
+    if (ld(c, 0x1C1914)) {
+        const uint32_t saved[4] = {c.eax, c.ecx, c.edx, c.ebx};
+        call_guest(c, kCalculate3D, {lis, 0});
+        c.eax = saved[0], c.ecx = saved[1], c.edx = saved[2], c.ebx = saved[3];
+    }
+    for (const auto& [a, blk] : voices) commit_3d(c, a, blk);
+    st(c, lis, 0);
+    st(c, lis + kListenerI3dl2, 0);
 }
 
 // HRESULT IDirectSoundBuffer_SetFrequency(LPDIRECTSOUNDBUFFER, DWORD dwFrequency):
@@ -762,10 +902,14 @@ void get_status(rt::Context& c) {
     ret(c, kDsOk, 8);
 }
 
-// HRESULT IDirectSound_CommitDeferredSettings(LPDIRECTSOUND): settings take effect at once here.
+// HRESULT IDirectSound_CommitDeferredSettings(LPDIRECTSOUND): the 3D settings
+// deferred so far (the device's commit, under 3D); the rest take effect at once here.
 void commit_deferred_settings(rt::Context& c) {
-    Lock lock_(ds().m);
-    catch_up(c);
+    {
+        Lock lock_(ds().m);
+        catch_up(c);
+    }
+    commit_all_3d(c);
     ret(c, kDsOk, 4);
 }
 
@@ -801,8 +945,19 @@ void download_effects_image(rt::Context& c) {
 }
 
 // HRESULT IDirectSound_SetI3DL2Listener(LPDIRECTSOUND, LPCDSI3DL2LISTENER, DWORD dwApply):
-// the environmental reverb's parameters, recorded.
+// the environmental reverb's parameters, for the native reverb, and into
+// the I3DL2 listener's block, whose room figures the 3D calculator reads
+// for each voice's reverb send (0x1A6B4A); committed unless deferred.
 void set_i3dl2_listener(rt::Context& c) {
+    if (const uint32_t lis = ds().listener; lis && arg(c, 1)) {
+        for (uint32_t k = 0; k < 12; ++k) st(c, lis + kListenerI3dl2 + 4 + 4 * k, ld(c, arg(c, 1) + 4 * k));
+        st(c, lis + kListenerI3dl2, ld(c, lis + kListenerI3dl2) | 0xFFF);
+    }
+    set_reverb(c);
+    if (ds().listener && !(arg(c, 2) & 1)) commit_all_3d(c);
+    ret(c, kDsOk, 12);
+}
+void set_reverb(rt::Context& c) {
     Lock lock_(ds().m);
     catch_up(c);
     // DSI3DL2LISTENER: lRoom, lRoomHF, flRoomRolloffFactor, flDecayTime,
@@ -817,7 +972,6 @@ void set_i3dl2_listener(rt::Context& c) {
         r.diffusion = f(9), r.density = f(10), r.hf_reference = f(11);
         ds().reverb.set(r);
     }
-    ret(c, kDsOk, 12);
 }
 
 // ---------------------------------------------------------------- streams
@@ -852,6 +1006,7 @@ void create_stream(rt::Context& c, const char* fn, uint32_t desc, uint32_t out) 
     b->voice.make_stream();
     b->voice.mix_bins = read_mix_bins(c, ld(c, desc + 20));
     b->voice.headroom = default_headroom(flags);
+    make_3d(c, *b);
     const uint32_t obj = guest_object(c);
     st(c, obj, kStreamVtable);
     st(c, obj + 4, kStreamInnerVtable);
@@ -890,6 +1045,7 @@ void stream_release(rt::Context& c) {
     if (refs == 0) {
         catch_up(c);
         if (!b.packets.empty()) unmodelled("CDirectSoundStream_Release", "releasing a stream with packets still attached");
+        if (b.block3d) ds().spare_3d.push_back(b.block3d);
         ds().buffers.erase(a);
         free_guest_object(a);
     }
@@ -1133,8 +1289,14 @@ void get_speaker_config(rt::Context& c) {
 }
 
 // VOID DirectSoundUseFullHRTF(): chooses the full head-related filter table
-// for 3D voices. 3D positioning isn't applied yet (below), so nothing to choose.
-void use_full_hrtf(rt::Context& c) { ret(c, c.eax, 0); }
+// for 3D voices: the original's own installer (CHRTFSource_SetFullHRTF5Channel,
+// 0x1A7981) puts the calculator's functions in place.
+void use_full_hrtf(rt::Context& c) {
+    const uint32_t saved[4] = {c.eax, c.ecx, c.edx, c.ebx};
+    call_guest(c, kSetFullHrtf5Channel, {});
+    c.eax = saved[0], c.ecx = saved[1], c.edx = saved[2], c.ebx = saved[3];
+    ret(c, c.eax, 0);
+}
 
 // HRESULT IDirectSoundBuffer_SetNotificationPositions(LPDIRECTSOUNDBUFFER,
 //     DWORD dwNotifyCount, LPCDSBPOSITIONNOTIFY paNotifies): each
@@ -1161,40 +1323,45 @@ void set_notification_positions(rt::Context& c) {
     ret(c, kDsOk, 12);
 }
 
-// DirectSound's own 3D: the buffer's position, velocity, distances and
-// rolloff curve, and the listener's parameters. On the console the library
-// turns them into each voice's volumes, pitch (Doppler) and filters at
-// CommitDeferredSettings. They are kept and NOT yet applied: 3D voices play
-// unpositioned, which is said once. (The sister project lifts the library's
-// 3D calculator and feeds its results to the voices; doing the same here is
-// the work to do.)
-void not_positioned() { notice_once("DirectSound's 3D positioning (3D sounds play unpositioned)"); }
-float farg(rt::Context& c, int i) { return std::bit_cast<float>(arg(c, i)); }
-// HRESULT IDirectSoundBuffer_SetPosition(LPDIRECTSOUNDBUFFER, FLOAT x, FLOAT y, FLOAT z, DWORD dwApply)
-BUFFER_SETTER(set_position_3d, 20, {
-    for (int k = 0; k < 3; ++k) b.position[k] = farg(c, 1 + k);
-    not_positioned();
-})
-// HRESULT IDirectSoundBuffer_SetVelocity(LPDIRECTSOUNDBUFFER, FLOAT x, FLOAT y, FLOAT z, DWORD dwApply)
-BUFFER_SETTER(set_velocity_3d, 20, {
-    for (int k = 0; k < 3; ++k) b.velocity[k] = farg(c, 1 + k);
-    not_positioned();
-})
+// A 3D setter: the fields into the voice's block, its dirty flags, and a
+// commit unless DS3D_DEFERRED (bit 0 of the last argument).
+void set_3d(rt::Context& c, const char* fn, std::initializer_list<std::pair<uint32_t, uint32_t>> fields, uint32_t dirty, uint32_t apply,
+            uint32_t bytes) {
+    const uint32_t a = arg(c, 0);
+    uint32_t blk = 0;
+    {
+        Lock lock_(ds().m);
+        blk = buffer(c, a, fn).block3d;
+    }
+    if (!blk) unmodelled(fn, "3D settings on a voice made without DSBCAPS_CTRL3D (the original reads a null block)");
+    for (const auto& [offset, value] : fields) st(c, blk + offset, value);
+    st(c, blk, ld(c, blk) | dirty);
+    if (!(apply & 1)) commit_3d(c, a, blk);
+    ret(c, kDsOk, bytes);
+}
+// HRESULT IDirectSoundBuffer_SetPosition / SetVelocity(LPDIRECTSOUNDBUFFER, FLOAT x, FLOAT y, FLOAT z, DWORD dwApply)
+void set_position_3d(rt::Context& c) {
+    set_3d(c, "IDirectSoundBuffer_SetPosition", {{8, arg(c, 1)}, {12, arg(c, 2)}, {16, arg(c, 3)}}, 0x10000, arg(c, 4), 20);
+}
+void set_velocity_3d(rt::Context& c) {
+    set_3d(c, "IDirectSoundBuffer_SetVelocity", {{0x14, arg(c, 1)}, {0x18, arg(c, 2)}, {0x1C, arg(c, 3)}}, 0x20000, arg(c, 4), 20);
+}
 // HRESULT IDirectSoundBuffer_SetMinDistance / SetMaxDistance(LPDIRECTSOUNDBUFFER, FLOAT, DWORD dwApply)
-BUFFER_SETTER(set_min_distance, 12, {
-    b.min_distance = farg(c, 1);
-    not_positioned();
-})
-BUFFER_SETTER(set_max_distance, 12, {
-    b.max_distance = farg(c, 1);
-    not_positioned();
-})
-// HRESULT IDirectSoundBuffer_SetRolloffCurve(LPDIRECTSOUNDBUFFER, const FLOAT* pflPoints, DWORD dwPointCount, DWORD dwApply)
-BUFFER_SETTER(set_rolloff_curve, 16, not_positioned())
-// HRESULT IDirectSound_SetAllParameters(LPDIRECTSOUND, LPCDS3DLISTENER, DWORD dwApply): the listener.
+void set_min_distance(rt::Context& c) { set_3d(c, "IDirectSoundBuffer_SetMinDistance", {{0x38, arg(c, 1)}}, 0x200000, arg(c, 2), 12); }
+void set_max_distance(rt::Context& c) { set_3d(c, "IDirectSoundBuffer_SetMaxDistance", {{0x3C, arg(c, 1)}}, 0x200000, arg(c, 2), 12); }
+// HRESULT IDirectSoundBuffer_SetRolloffCurve(LPDIRECTSOUNDBUFFER, const FLOAT* pflPoints, DWORD dwPointCount, DWORD dwApply):
+// the library keeps the pointer (the game's memory, read at each commit).
+void set_rolloff_curve(rt::Context& c) {
+    set_3d(c, "IDirectSoundBuffer_SetRolloffCurve", {{0x50, arg(c, 1)}, {0x54, arg(c, 2)}}, 0x1000000, arg(c, 3), 16);
+}
+// HRESULT IDirectSound_SetAllParameters(LPDIRECTSOUND, LPCDS3DLISTENER, DWORD dwApply):
+// DS3DLISTENER after its dwSize into the listener's block (0x1A6A65).
 void set_all_listener_parameters(rt::Context& c) {
-    Lock lock_(ds().m);
-    not_positioned();
+    const uint32_t lis = ds().listener, p = arg(c, 1);
+    if (!lis) unmodelled("IDirectSound_SetAllParameters", "the listener before DirectSoundCreate");
+    for (uint32_t k = 0; k < 15; ++k) st(c, lis + 8 + 4 * k, ld(c, p + 4 + 4 * k));
+    st(c, lis, ld(c, lis) | 0x3F);
+    if (!(arg(c, 2) & 1)) commit_all_3d(c);
     ret(c, kDsOk, 12);
 }
 

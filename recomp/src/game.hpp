@@ -103,6 +103,19 @@ inline const std::vector<uint32_t> kLiftedLibraryFunctions = {
     0x168040,  // D3DDevice_LightEnable
     0x16B380, 0x16B450, 0x16B4B0, 0x16B4E0,  // a light's derived values
     0x16D850, 0x16D860, 0x16D8C0,            // cosine, exponential and their like on the x87
+    // DirectSound's 3D calculator, which the native DirectSound runs over the
+    // library's own blocks (runtime/host/dsound.cpp, 3D): pure computation,
+    // no APU registers. Its two entry points, the full-HRTF installer and the
+    // ten functions it installs (0x1C1914-0x1C1938), the head-related filter
+    // lookup, and what they call.
+    0x1A61E9, 0x1A5224,                      // CDirectSound3DCalculator_Calculate3D, _GetVoiceData
+    0x1A7981,                                // CHRTFSource_SetFullHRTF5Channel
+    0x1A724D, 0x1A7296, 0x1A73F9, 0x1A748F, 0x1A74DA, 0x1A75EB, 0x1A767B, 0x1A774A, 0x1A77EC, 0x1A7865,  // its functions
+    0x1AA036,                                // the head-related filter lookup
+    0x1A4589, 0x1A45AE,                      // saving the x87 state inside a DPC (KeSaveFloatingPointState)
+    0x1A460B, 0x1A4658, 0x1A4681, 0x1A46B8, 0x1A46D8, 0x1A470C, 0x1A472E,  // the calculator's calls through the installed functions
+    0x1A7169, 0x1A7190, 0x1A71C7, 0x1A7210,  // vector maths
+    0x1A98CA, 0x1A9953, 0x1AC1F3, 0x1AC1FC, 0x1AC588, 0x1AC720,  // the maths they share (logarithms, float to int)
 };
 // Entry points the runtime calls itself.
 inline const std::vector<uint32_t> kStartupRoots = {
@@ -110,6 +123,9 @@ inline const std::vector<uint32_t> kStartupRoots = {
     0x16C5D0, 0x16D440, 0x16D520, 0x16D750, 0x16DB50, 0x167370, 0x16DA30, 0x169BA0,
     0x16A460, 0x16A860, 0x16A6C0, 0x16A650, 0x16A5A0,
     0x16AFC0, 0x16D840, 0x16D3F0, 0x16D560,
+    // DirectSound's 3D (see kLiftedLibraryFunctions), and XAPI's
+    // XAudioGetSpeakerConfig, which DirectSoundCreate asks.
+    0x1A61E9, 0x1A5224, 0x1A7981, 0x1AA036, 0x15089F,
 };
 // Functions inside lifted regions that belong to a replaced library and that
 // only it calls: not lifted, and `qilin lift` fails if lifted code can reach one.
