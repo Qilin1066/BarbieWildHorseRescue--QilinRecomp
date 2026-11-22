@@ -247,10 +247,16 @@ add_test(NAME qilin_host_tests COMMAND qilin_host_tests)
 
 # qilin_run: the game, from `qilin lift` output (needs your own default.xbe):
 #   qilin lift <game> --out gen && cmake -B build -DQILIN_GEN_DIR=$PWD/gen
+# Bounds-check every guest memory access in lifted code (bring-up): off, an
+# access outside guest memory faults instead, and guest_ram.cpp's fault
+# handler stops the runtime naming the guest address, at no cost per access.
+option(QILIN_CHECKED_MEMORY "Bounds-check every guest memory access in lifted code" OFF)
 function(qilin_runner target)   # ARGN: the generated sources
     add_executable(${target} recomp/runtime/host/run.cpp recomp/runtime/dispatch.cpp ${ARGN})
     target_include_directories(${target} PRIVATE recomp/src)
-    target_compile_definitions(${target} PRIVATE QILIN_CHECKED_MEMORY)  # bring-up: bad guest accesses stop with an address
+    if(QILIN_CHECKED_MEMORY)
+        target_compile_definitions(${target} PRIVATE QILIN_CHECKED_MEMORY)
+    endif()
     target_link_libraries(${target} PRIVATE qilin_host qilin_platform qilin_audio qilin_xbe)
     if(MSVC)
         # The generated files are large: room for their sections (/bigobj),
@@ -286,7 +292,12 @@ if(QILIN_PLAYER_KIT)
     endif()
     add_library(wildhorse_kit_main OBJECT recomp/runtime/host/run.cpp recomp/runtime/dispatch.cpp)
     target_include_directories(wildhorse_kit_main PRIVATE recomp/src)
-    target_compile_definitions(wildhorse_kit_main PRIVATE QILIN_CHECKED_MEMORY)
+    if(QILIN_CHECKED_MEMORY)
+        target_compile_definitions(wildhorse_kit_main PRIVATE QILIN_CHECKED_MEMORY)
+        set(kit_checked " -DQILIN_CHECKED_MEMORY")
+    else()
+        set(kit_checked "")
+    endif()
     target_link_libraries(wildhorse_kit_main PRIVATE qilin_host qilin_xbe qilin_warnings)
     set(kit_libraries qilin_host qilin_ui qilin_imgui qilin_gfx qilin_audio qilin_platform qilin_xbe qilin_volk SDL3-static)
     set(kit_archive "${CMAKE_BINARY_DIR}/libwildhorse_kit.a")
@@ -308,12 +319,12 @@ if(QILIN_PLAYER_KIT)
     string(JOIN " " kit_system_text ${kit_system_libraries})
     # What the lifted code is compiled and linked with: kit.ninja, included by
     # the build.ninja the player's script writes ($kit is the kit's folder).
-    # The same floating-point rules as qilin_runtime (bit-exact SSE), and the
-    # same checked guest memory as qilin_run. Lifted calls nest as deeply as
+    # The same floating-point rules as qilin_runtime (bit-exact SSE), and
+    # guest memory as qilin_run accesses it (QILIN_CHECKED_MEMORY). Lifted calls nest as deeply as
     # the guest's: a 16 MB main stack.
     file(WRITE "${CMAKE_BINARY_DIR}/kit.ninja"
         "# Written by CMake for the player kit (QILIN_PLAYER_KIT).\n"
-        "cxxflags = -O2 -DNDEBUG -DQILIN_CHECKED_MEMORY -std=c++23 -ffp-contract=off -fno-fast-math -w -I$kit/include\n"
+        "cxxflags = -O2 -DNDEBUG${kit_checked} -std=c++23 -ffp-contract=off -fno-fast-math -w -I$kit/include\n"
         "ldflags = -static -O2 -Wl,--stack,16777216\n"
         "libs = $kit/lib/libwildhorse_kit.a ${kit_system_text}\n")
     # Linked with stand-ins for the lifted code: the kit is complete.

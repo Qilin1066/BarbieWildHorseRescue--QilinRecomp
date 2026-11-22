@@ -6,7 +6,7 @@ What runs beside the lifted code. The design is GBTGhoulies--QilinRecomp's (its 
 | Part | Files | State |
 |---|---|---|
 | The replacement registry: native functions at guest addresses; anything lifted code calls that has none stops the runtime, named, with its caller | `host/host.*`, `call_guest.cpp` | as the sister project's |
-| Guest RAM: one shared-memory object mapped at 0 and at the kernel's two windows onto it, in a 4 GB reservation; checked accesses in bring-up builds | `host/guest_ram.cpp` | as the sister project's. Which windows this game uses is **to confirm** |
+| Guest RAM: one shared-memory object mapped at 0 and at the kernel's two windows onto it, in a 4 GB reservation; lifted code accesses it unchecked, and an access to what isn't mapped faults, which a fault handler turns into the runtime's stop naming the guest address (v0.15.0; `-DQILIN_CHECKED_MEMORY=ON` bounds-checks every access instead, for bring-up) | `host/guest_ram.cpp` | as the sister project's. The game uses both kernel windows (D3D's contiguous memory and its write-combined surface locks) |
 | The kernel: memory (virtual, contiguous, pool), critical sections, timers and DPCs, console settings, sections loaded on demand, strings, SHA-1 and HMAC | `host/kernel.cpp`, `kernel_crypto.cpp` | 80 of the kernel's exports; the game's imports are compared against them in step 1 |
 | The scheduler: guest threads on host threads with the Xbox's single-processor rules, waits, events, mutants, DPCs | `host/sched.*` | as the sister project's |
 | The I/O manager: `\Device\CdRom0` over the extracted disc (read-only, names matched without regard to case), the hard disk's partitions as folders of the data folder, symbolic links | `host/kernel_io.cpp` | as the sister project's |
