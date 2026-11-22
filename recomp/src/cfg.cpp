@@ -222,7 +222,10 @@ void Cfg::resolve_jt(const std::vector<const Insn*>& hist, const XbeSection& sec
     std::optional<uint64_t> n;  // number of valid index values
     for (auto it = hist.rbegin() + 1; it != hist.rend(); ++it) {
         const Insn& i = **it;
-        if (i.mnem == ZYDIS_MNEMONIC_MOVZX && !btable && i.nops == 2 && i.op[0].is_reg(reg) && is_flat_mem(i.op[1]) &&
+        // [ebp + T2] is SS-relative by default, and flat all the same on the
+        // Xbox (every segment's base is 0): seen in this game, an index in ebp.
+        if (i.mnem == ZYDIS_MNEMONIC_MOVZX && !btable && i.nops == 2 && i.op[0].is_reg(reg) &&
+            (is_flat_mem(i.op[1]) || (i.op[1].kind == Operand::Kind::Mem && i.op[1].seg == ZYDIS_REGISTER_SS)) &&
             i.op[1].size == 8 && is_gpr32(i.op[1].base) && i.op[1].index == ZYDIS_REGISTER_NONE && i.op[1].disp > 0) {
             btable = uint32_t(i.op[1].disp);
             idx_reg = i.op[1].base;
@@ -234,6 +237,36 @@ void Cfg::resolve_jt(const std::vector<const Insn*>& hist, const XbeSection& sec
             // The immediate is sign-extended by the decoder; the bound is unsigned at the register's width.
             n = (i.op[1].imm & width_mask(i.op[0].size)) + 1;
             out.how = "cmp";
+            break;
+        }
+        // `cmp idx, reg` with reg a constant pushed and popped just before
+        // (`push N; pop reg`), as the C runtime's formatted output does: the
+        // value-range analysis doesn't follow a value through the stack (a
+        // `mov reg, N` it does, and is left to it).
+        if (i.mnem == ZYDIS_MNEMONIC_CMP && i.nops == 2 && i.op[0].kind == Operand::Kind::Reg && index_reg_of(i.op[0].reg) == idx_reg &&
+            i.op[1].kind == Operand::Kind::Reg && is_gpr32(i.op[1].reg) && i.op[0].size == 32) {
+            const ZydisRegister k = i.op[1].reg;
+            std::optional<uint64_t> constant;
+            for (auto jt = it + 1; jt != hist.rend(); ++jt) {
+                const Insn& j = **jt;
+                if (j.mnem == ZYDIS_MNEMONIC_POP && j.nops >= 1 && j.op[0].is_reg(k)) {
+                    // The push it pops: the last one before, with nothing between that touches the stack.
+                    for (auto pj = jt + 1; pj != hist.rend(); ++pj) {
+                        const Insn& q = **pj;
+                        if (q.mnem == ZYDIS_MNEMONIC_PUSH) {
+                            if (q.op[0].kind == Operand::Kind::Imm) constant = uint64_t(q.op[0].imm) & 0xFFFFFFFFu;
+                            break;
+                        }
+                        if (q.mnem == ZYDIS_MNEMONIC_POP || q.mnem == ZYDIS_MNEMONIC_CALL || writes_reg(q, ZYDIS_REGISTER_ESP)) break;
+                    }
+                    break;
+                }
+                if (writes_reg(j, k)) break;
+            }
+            if (constant) {
+                n = *constant + 1;
+                out.how = "cmp";
+            }
             break;
         }
         if (on_idx && i.mnem == ZYDIS_MNEMONIC_AND) {

@@ -51,7 +51,7 @@ Imported variables (13): `ExEventObjectType`, `HalBootSMCVideoMode`, `HalDiskCac
 
 ## Functions and control flow (first pass, nothing tuned)
 - **7,659 functions**, 499,361 instructions, found in under 4 seconds: 6,795 reachable from the entry point and call targets, 481 from C++ exception tables, 229 orphans, 118 from immediates, 24 in gaps, 12 from pointers in data.
-- 262 jump tables (1,837 targets); **73 indirect jumps unresolved**; 5,111 indirect call sites.
+- 262 jump tables (1,837 targets); **73 indirect jumps unresolved**; 5,111 indirect call sites. (v0.11.0: the 73 are all run-time targets by nature, and 4 heuristic tables are left: `code-analysis.md`.)
 - C++ exception handling is used heavily: 375 `FuncInfo` tables, 324 handler stubs, 953 unwind funclets, 2 catch entry points. SEH: 48 scope tables, 19 filter/handler pairs.
 - No function with a bad decode or overlapping instructions; 66 candidates rejected as data decoded as code.
 - **Byte accounting of `.text`: 97.958%.** 1,327,123 bytes of code, 8,086 of tables, 37,168 of padding, **28,607 unknown** (the target is 0).

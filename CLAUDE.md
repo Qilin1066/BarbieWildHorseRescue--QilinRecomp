@@ -89,7 +89,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 2. DirectSound: 3D is in (v0.11.0: the library's calculator lifted, its blocks in guest memory, `dsound.cpp` under 3D). Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. Memory units: `XMountMUA`/`XUnmountMU` answer as for an empty slot (v0.11.0); saving to one would need them modelled.
 4. The differential test (GBTGhoulies' `tools/difftest`, Unicorn) with this game's conventions, and the decoder cross-check (`tools/check/verify_decoder.py`, needs libLLVM). Until they pass, lifted code is unverified.
-5. The 73 unresolved indirect jumps, the 9 heuristic jump tables, the last 67 unknown bytes, the two call targets in `libs` that aren't functions (`0x14F143`, `0x15FF41`).
+5. Static analysis is as far as it goes without the differential test (v0.11.0, `docs/code-analysis.md`): no unknown bytes in lifted regions, the 73 unresolved jumps are run-time targets, 4 heuristic tables are unbounded in the code itself, two library stubs are named and unlikely to be reached.
 6. The disc's files for runs past start-up (stage `Packages/` in batches, or run on the owner's PC); the player kit and `Play Wild Horse Rescue.bat`.
 
 ## Conventions
