@@ -1,11 +1,11 @@
 // Direct3D 8 (the XDK's D3D8 library), replaced natively over the Vulkan
 // renderer (recomp/runtime/gfx). From GBTGhoulies--QilinRecomp v0.41.3,
 // whose docs/graphics.md describes the design; this project's
-// docs/graphics.md records the port to this game's XDK build, which is in
-// progress: addresses confirmed in this build are used as they are here;
-// every other one is wrapped in unlocated(), with the sister build's value,
-// and stops the runtime if the game gets there. Comments below that cite
-// addresses of "the original" are the sister build's unless they say otherwise.
+// docs/graphics.md records the port to this game's XDK build. Every address
+// the code uses is this build's (v0.13.0: the last two pieces that needed
+// the sister build's, its frame clock and SetPixelShaderConstant, which this
+// build doesn't have, are gone). Comments below that cite addresses of "the
+// original" are the sister build's unless they say otherwise.
 //
 // What stays in guest memory, in the original layout:
 // - D3D's state tables and dirty flags (D3D__RenderState at 0x181B70 and the
@@ -84,16 +84,6 @@ rt::Mem mem(const rt::Context& c) { return rt::Mem{c.mem, c.mem_size}; }
 uint32_t ld(const rt::Context& c, uint32_t a) { return rt::ld32(mem(c), a, 0); }
 void st(const rt::Context& c, uint32_t a, uint32_t v) { rt::st32(mem(c), a, v, 0); }
 
-// An address this file took from the sister project's build (XDK 5659) that
-// hasn't been found in this game's (5558) yet: docs/graphics.md lists what
-// has. Reaching one stops the runtime, naming it, so nothing is ever read
-// or written at another game's address.
-uint32_t unlocated(uint32_t sister) {
-    static std::string why;
-    why = strf("Direct3D: the code here needs what the sister build keeps at %06X, which isn't located in this build yet (docs/graphics.md)", sister);
-    rt::trap(0, why.c_str());
-}
-
 [[noreturn]] void unmodelled(const char* fn, const std::string& what) {
     static std::string why;
     why = strf("%s: %s isn't modelled yet", fn, what.c_str());
@@ -110,11 +100,10 @@ struct Device {
     D3dConfig config;
     uint32_t width = 0, height = 0, interval = 1;
     // The frame rate (the settings'): original (the game's interval) and 60
-    // keep the console's vblank clock; display and unlimited give the game
-    // its time step from the host's clock (frame_clock) and pace frames by
-    // the display (frame_pacing).
+    // keep the console's vblank clock; display and unlimited pace frames by
+    // the display (frame_pacing). The game takes its time step from rdtsc
+    // whatever the rate (see frame_pacing).
     platform::Settings::FrameRate frame_rate = platform::Settings::FrameRate::Original;
-    std::chrono::steady_clock::time_point clock_last{};  // the frame clock's last call (unlocked rates)
     std::chrono::steady_clock::time_point next_frame{};  // the next frame's time, pacing without vsync
     std::chrono::steady_clock::time_point last_refresh{};
     std::chrono::steady_clock::time_point last_shown{};
@@ -336,62 +325,12 @@ void run_vblanks(rt::Context& c, Device& d, uint32_t until, bool swap_done) {
     }
 }
 
-// The game's frame clock at 0xFC030 (its per-frame function's first call):
-// the time step in seconds (0x5096C0) and the 300 Hz ticks it makes (count
-// 0x5096C4, carry 0x5096C8), as the original computes them: the vblanks
-// since the last present (0x5096D0, the vblank callback's) over the rate
-// (50 for PAL, else 60), the unclamped value at 0x5096B8, clamped to five
-// vblanks (5.0 at 0x32B184 over the rate), times 300 (0x32B180) plus the
-// carry, truncated; and the performance counter since start-up's low word
-// at 0x5096BC. With the frame rate unlocked (60, display, unlimited) the
-// time since its last call stands in for the vblanks, so the game moves by
-// the time that passed at any frame rate (it was written for a varying step;
-// the console never gave it less than 1/30 s, and the few places that
-// assumed so are fixed in game_fixes.cpp). Its ticks then run as they would:
-// whatever is done per tick happens as often as before.
-[[maybe_unused]] void frame_clock(rt::Context& c) {
-    Device* dp = g_device;
-    const rt::Mem m = mem(c);
-    auto f32 = [&](uint32_t a) { return std::bit_cast<float>(rt::ld32(m, a, 0)); };
-    auto put = [&](uint32_t a, float v) { rt::st32(m, a, std::bit_cast<uint32_t>(v), 0); };
-    const int rate = rt::ld32(m, unlocated(0x5096E0), 0) && !rt::ld32(m, unlocated(0x5096E4), 0) ? 50 : 60;
-    const float most = f32(unlocated(0x32B184)) / float(rate);
-    rt::st32(m, unlocated(0x5096BC), uint32_t(tsc_now()) - rt::ld32(m, unlocated(0x50E0D8), 0), 0);
-    float step;
-    const bool unlocked = dp && dp->frame_rate != platform::Settings::FrameRate::Original;
-    if (unlocked) {
-        const auto now = std::chrono::steady_clock::now();
-        const auto last = std::exchange(dp->clock_last, now);
-        // The first frame: two vblanks, as the console's first.
-        step = last.time_since_epoch().count() ? std::chrono::duration<float>(now - last).count() : 2.0f / float(rate);
-        // QILIN_FIXED_STEP=seconds[,after]: that step every frame whatever the
-        // time, from `after` seconds in (to try a high refresh rate's step on
-        // a slower machine).
-        static const auto fixed = [] {
-            std::pair<float, float> f{0.0f, 0.0f};
-            if (const char* v = std::getenv("QILIN_FIXED_STEP")) {
-                f.first = std::strtof(v, nullptr);
-                if (const char* comma = std::strchr(v, ',')) f.second = std::strtof(comma + 1, nullptr);
-            }
-            return f;
-        }();
-        static const auto started = now;
-        if (fixed.first > 0 && std::chrono::duration<float>(now - started).count() >= fixed.second) step = fixed.first;
-    } else {
-        // fild of the count (unsigned: 2^32 added to a negative one, 0x32B144), over the rate.
-        const uint32_t vblanks = rt::ld32(m, unlocated(0x5096D0), 0);
-        step = float(double(vblanks) / double(rate));
-    }
-    put(unlocated(0x5096B8), step);
-    const float dt = step > most ? most : step;
-    put(unlocated(0x5096C0), dt);
-    const float x = dt * f32(unlocated(0x32B180)) + f32(unlocated(0x5096C8));
-    const int32_t ticks = int32_t(x);  // cvttss2si
-    rt::st32(m, unlocated(0x5096C4), uint32_t(ticks), 0);
-    put(unlocated(0x5096C8), x - float(ticks));
-    ret(c, c.eax, 0);
-}
-
+// The game times its frames itself: its end of frame (0xF1E60, after Swap)
+// reads the time-stamp counter (0xF60F0) and turns the ticks since the
+// last frame into seconds (0xF6120, by the clock rate it measured against
+// QueryPerformanceCounter at start-up, 0xF6010), and its updates scale by
+// that step. So there is nothing to replace: at any frame rate the game moves
+// by the time that passed, as the runtime's rdtsc follows the host's clock.
 // Waiting for the next frame, at the end of Swap. Original: the console's
 // vblank after the game's presentation interval, by the clock, as the
 // console's Swap waits. 60: sixty frames a second by the clock (fewer on a
@@ -1099,7 +1038,7 @@ void swap(rt::Context& c) {
         const auto now = std::chrono::steady_clock::now();
         if (d.last_shown.time_since_epoch().count()) {
             using Rate = platform::Settings::FrameRate;
-            const char* rate = d.frame_rate == Rate::Original ? "30, as the console"
+            const char* rate = d.frame_rate == Rate::Original ? "the game's own (vsync, 60 at most)"
                                : d.frame_rate == Rate::Sixty  ? "60"
                                : d.frame_rate == Rate::Display ? "the display's"
                                                                : "unlimited";
@@ -1128,7 +1067,7 @@ void swap(rt::Context& c) {
     // with the menu over it until it closes; the time it was open is taken off
     // the game's clock (its vblanks) and the sound's, so nothing jumps.
     if (d.menu && d.menu->open()) {
-        const auto paused = host::clock::now(), paused_real = std::chrono::steady_clock::now();
+        const auto paused = host::clock::now();
         pause_audio(true);
         while (d.menu->open()) {
             pump_window(d);
@@ -1138,7 +1077,7 @@ void swap(rt::Context& c) {
         }
         pause_audio(false);
         d.epoch += host::clock::now() - paused;  // (no time passes in virtual time)
-        d.clock_last += std::chrono::steady_clock::now() - paused_real;  // the unlocked clock too
+        host::tsc_skip(std::chrono::duration_cast<std::chrono::nanoseconds>(host::clock::now() - paused));  // the game's frame timer
         d.last_shown = {};
         d.menu->restart_frame_times();
         d.frame_began = {};
@@ -4011,51 +3950,6 @@ void set_pixel_shader(rt::Context& c) {
     ret(c, c.eax, 4);
 }
 
-// VOID D3DDevice_SetPixelShaderConstant(DWORD Register, CONST void*, DWORD Count):
-// as the original, each register's float4 becomes a D3DCOLOR (clamped to
-// [0,1], times 255, rounded as cvtss2si does: to nearest even), kept at
-// device +0x8E0, and copied into each combiner constant the current pixel
-// shader maps to that register (the definition's PSC0Mapping, PSC1Mapping
-// and final-combiner mapping against D3D's per-register pattern at
-// 0x32CF80): D3DRS_PSCONSTANT0_0.., PSCONSTANT1_0.. and the two
-// final-combiner constants in D3D__RenderState. Register 0's first three
-// floats also reach the GPU as given.
-void set_pixel_shader_constant(rt::Context& c) {
-    const char* fn = "D3DDevice_SetPixelShaderConstant";
-    Device& d = device(fn);
-    const uint32_t first = arg(c, 0), data = arg(c, 1), count = arg(c, 2);
-    const uint32_t shader = ld(c, kDeviceStorage + 0x780);
-    if (count && !shader) unmodelled(fn, "constants with no pixel shader set");
-    if (first + count > 16) unmodelled(fn, strf("registers %u..%u", first, first + count));
-    const uint32_t def = count ? ld(c, shader + 8) : 0;
-    auto f = [&](uint32_t a) { return std::bit_cast<float>(ld(c, a)); };
-    for (uint32_t k = 0; k < count; ++k) {
-        const uint32_t reg = first + k, src = data + 16 * k;
-        uint32_t packed = 0;
-        static constexpr int kShift[4] = {16, 8, 0, 24};  // x red, y green, z blue, w alpha
-        for (int i = 0; i < 4; ++i) {
-            float v = f(src + 4 * i);
-            const float hi = f(unlocated(0x32CF60) + 4 * i), lo = f(unlocated(0x434240) + 4 * i), scale = f(unlocated(0x32CF70) + 4 * i);
-            v = v < hi ? v : hi;  // minps: the second operand unless the first is less
-            v = v > lo ? v : lo;  // maxps
-            v = v * scale;
-            packed |= (uint32_t(int32_t(std::nearbyint(v))) & 0xFFu) << kShift[i];
-        }
-        st(c, kDeviceStorage + 0x8E0 + 4 * reg, packed);
-        const uint32_t pattern = ld(c, unlocated(0x32CF80) + 4 * reg);
-        const uint32_t c0 = pattern ^ ld(c, def + 0xE4), c1 = pattern ^ ld(c, def + 0xE8), fc = pattern ^ ld(c, def + 0xEC);
-        for (uint32_t i = 0; i < 8; ++i) {
-            if (!((c0 >> (4 * i)) & 0xF)) st(c, kRenderStateTable + 0x28 + 4 * i, packed);  // D3DRS_PSCONSTANT0_i (0x181B98)
-            if (!((c1 >> (4 * i)) & 0xF)) st(c, kRenderStateTable + 0x48 + 4 * i, packed);  // D3DRS_PSCONSTANT1_i (0x181BB8)
-        }
-        if (!(fc & 0xF)) st(c, 0x177B5C, packed);          // D3DRS_PSFINALCOMBINERCONSTANT0
-        if (!((fc >> 4) & 0xF)) st(c, 0x177B60, packed);   // D3DRS_PSFINALCOMBINERCONSTANT1
-        if (k == 0 && first == 0)
-            for (int i = 0; i < 3; ++i) d.ps_constant0[i] = ld(c, src + 4 * i);
-    }
-    ret(c, c.eax, 12);
-}
-
 // LoadVertexShader(Handle, Address): as the original, unless the device is
 // recording (flag 0x10), D3D's shadows of the program (device +0x1098, 16
 // bytes a slot) and of the declaration's constants (0x180D50) (the lifted
@@ -4325,7 +4219,6 @@ constexpr D3dFn kD3d[] = {
     {"D3DDevice_SetTexture", 8, set_texture},
     {"D3DDevice_SetVertexShaderInput", 12, set_vertex_shader_input},
     {"D3DDevice_SetPixelShader", 4, set_pixel_shader},
-    {"D3DDevice_SetPixelShaderConstant", 12, set_pixel_shader_constant},
     {"D3DDevice_SetVertexShader", 4, set_vertex_shader},
     {"D3DDevice_SetModelView", 12, set_model_view},
     {"D3DDevice_LoadVertexShader", 8, load_vertex_shader},
@@ -4384,9 +4277,6 @@ void register_d3d(const D3dConfig& config) {
             flush_cpu_frames(c, d);
         }
     });
-    // (The sister game's frame clock is replaced natively at its address; this
-    // game's hasn't been found, so frame_clock isn't registered and only the
-    // original frame rate applies: docs/graphics.md.)
     // By name, at this build's addresses. A replacement whose function this
     // build doesn't have (or XbSymbolDatabase doesn't name in it) isn't
     // registered: a call into the library that nothing replaces stops the

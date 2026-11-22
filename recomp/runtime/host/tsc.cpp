@@ -1,5 +1,6 @@
 // The Xbox's time-stamp counter, from the host's clock: what lifted `rdtsc`
 // reads (XAPI's QueryPerformanceCounter, the engine's timers).
+#include <atomic>
 #include <chrono>
 
 #include "clock.hpp"
@@ -9,11 +10,14 @@ namespace qilin::host {
 
 namespace {
 constexpr uint64_t kTscHz = 733333333;  // the console's processor clock
+std::atomic<int64_t> g_skipped{0};      // ns taken off: the time the game stood still under the menu
 }
+
+void tsc_skip(std::chrono::nanoseconds d) { g_skipped += d.count(); }
 
 uint64_t tsc_now() {
     static const auto start = clock::now();
-    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count());
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count() - g_skipped);
     return ns / 1000000000u * kTscHz + ns % 1000000000u * kTscHz / 1000000000u;
 }
 

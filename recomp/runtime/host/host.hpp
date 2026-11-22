@@ -9,6 +9,8 @@
 // stops the game with a report naming it and its caller.
 #pragma once
 
+#include <chrono>
+
 #include <cstdint>
 #include <initializer_list>
 #include <filesystem>
@@ -191,6 +193,9 @@ void idle(rt::Context& c);
 // The Xbox's time-stamp counter (rdtsc, 733 MHz), from the host's clock: what
 // XAPI's QueryPerformanceCounter reads.
 uint64_t tsc_now();
+// Takes a span off it: the time the game stood still under the settings
+// menu, so the game's own frame timer (it reads rdtsc) sees no jump.
+void tsc_skip(std::chrono::nanoseconds d);
 void add_idle_hook(void (*hook)(rt::Context&));
 
 // This game's natively replaced functions (game_native.cpp), for the supported build only.
