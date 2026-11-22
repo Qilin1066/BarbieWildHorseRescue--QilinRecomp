@@ -3160,6 +3160,18 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
             }
             flat = v.count > 0;
         }
+    } else if (passthrough && !v.attr[0].empty()) {
+        // Pre-transformed vertices (this game's menus, buttons and text):
+        // screen positions already, scaled by c-96 and offset by c-95.
+        const float sx = vsu[0], ox = vsu[4], sy = vsu[1], oy = vsu[5];
+        flat_x0 = flat_y0 = INFINITY, flat_x1 = flat_y1 = -INFINITY;
+        for (uint32_t i = 0; i < v.count; ++i) {
+            const float* p = &v.attr[0][(v.constant & 1) ? 0 : size_t(i) * 4];
+            const float x = p[0] * sx + ox, y = p[1] * sy + oy;
+            flat_x0 = std::min(flat_x0, x), flat_x1 = std::max(flat_x1, x);
+            flat_y0 = std::min(flat_y0, y), flat_y1 = std::max(flat_y1, y);
+        }
+        flat = v.count > 0;
     }
     // The HUD at its own shape on pictures wider than 4:3. The game lays its
     // 2D out in 640×480 and, for 16:9, lets the TV stretch it with the 3D;
@@ -3186,14 +3198,20 @@ void issue_draw(rt::Context& c, Device& d, const char* fn, uint32_t prim, Vertic
                 for (const auto* list : {&d.flat_before, &d.flat_now})
                     for (const auto& r : *list) {
                         const float shared = std::min(r[3], flat_y1) - std::max(r[2], flat_y0);
-                        if (shared <= 0.5f * std::min(h, r[3] - r[2]) || r[0] > hi + gap || r[1] < lo - gap) continue;
+                        if (shared <= 0.5f * std::min(h, r[3] - r[2]) || std::fabs(r[3] - r[2] - h) > 0.25f * std::max(h, r[3] - r[2]) ||
+                            r[0] > hi + gap || r[1] < lo - gap)
+                            continue;  // not on its line: another height, or apart
                         if (r[0] < lo || r[1] > hi) lo = std::min(lo, r[0]), hi = std::max(hi, r[1]), grew = true;
                     }
             }
-            const float centre = (lo + hi) * 0.5f;
-            const float about = hs->hud == platform::Settings::Hud::Middle ? w * 0.5f : centre < w / 3 ? 0.0f : centre > w * 2 / 3 ? w : w * 0.5f;
-            vsu[gfx::nv2a::kVsPixels * 4 + 1] = (4.0f / 3.0f) / d.aspect;
-            vsu[gfx::nv2a::kVsPixels * 4 + 2] = about;
+            // A row of pieces across the whole frame is a backdrop drawn in
+            // tiles (this game's menus): it stays across the whole picture.
+            if (hi - lo < 0.9f * w) {
+                const float centre = (lo + hi) * 0.5f;
+                const float about = hs->hud == platform::Settings::Hud::Middle ? w * 0.5f : centre < w / 3 ? 0.0f : centre > w * 2 / 3 ? w : w * 0.5f;
+                vsu[gfx::nv2a::kVsPixels * 4 + 1] = (4.0f / 3.0f) / d.aspect;
+                vsu[gfx::nv2a::kVsPixels * 4 + 2] = about;
+            }
         }
     }
 

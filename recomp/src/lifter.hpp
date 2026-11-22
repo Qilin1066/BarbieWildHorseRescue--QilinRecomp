@@ -61,6 +61,11 @@ struct Conventions {
     // code and return to its caller. A call to one accepts that return: with
     // esp back where its caller's `ret` would leave it, the caller returns too.
     std::set<uint32_t> returns_past_caller;
+    // Functions the runtime runs native code after (rt::after_return, at
+    // each of their returns, once their registers are written back): the
+    // game's own code whose results an enhancement adjusts, the projection
+    // the engine builds for widescreen.
+    std::set<uint32_t> after_return;
 };
 
 class Lifter {

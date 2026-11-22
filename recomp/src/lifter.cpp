@@ -779,7 +779,9 @@ void FnEmitter::emit(const Insn& i, uint8_t live_out) {
             const uint32_t n = i.nops >= 1 && d.kind == Operand::Kind::Imm ? uint32_t(d.imm & 0xFFFF) : 0;
             mark(ESP);
             if (const uint8_t o = flags_out(f_.start)) line(pack_flags(o));
-            line(std::format("c.ret_to = rt::ld32(m, esp, 0x{:X}u); esp += {}u; writeback(); return;", i.addr, 4 + n));
+            const bool hooked = conv_ && conv_->after_return.contains(f_.start);
+            line(std::format("c.ret_to = rt::ld32(m, esp, 0x{:X}u); esp += {}u; writeback(); {}return;", i.addr, 4 + n,
+                             hooked ? std::format("rt::after_return(c, 0x{:X}u); ", f_.start) : std::string()));
             return;
         }
         case ZYDIS_MNEMONIC_JMP: {

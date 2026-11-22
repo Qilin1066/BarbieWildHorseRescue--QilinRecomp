@@ -171,6 +171,10 @@ inline Conventions conventions() {
     // shared error path in its caller's frame, returning to that caller's
     // caller (callers 0x148BD6 and exp's 0x15227E).
     c.returns_past_caller = {0x148D06};
+    // The engine's projection builder (0xF2E60: the camera's perspective
+    // times the viewport's matrix, into 0x28F5B0): widened for pictures
+    // wider than 4:3 after it (host/aspect.cpp).
+    c.after_return = {0xF2E60};
     return c;
 }
 
