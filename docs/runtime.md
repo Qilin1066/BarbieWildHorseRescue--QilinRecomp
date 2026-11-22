@@ -2,18 +2,18 @@
 
 What runs beside the lifted code. The design is GBTGhoulies--QilinRecomp's (its `docs/runtime.md` is the long record: the scheduler's rules, the heap, the file system, each kernel function's behaviour and how it was checked); this file says what is here, what was changed, and what waits for the game.
 
-## What is here (v0.3.0)
+## What is here
 | Part | Files | State |
 |---|---|---|
 | The replacement registry: native functions at guest addresses; anything lifted code calls that has none stops the runtime, named, with its caller | `host/host.*`, `call_guest.cpp` | as the sister project's |
 | Guest RAM: one shared-memory object mapped at 0 and at the kernel's two windows onto it, in a 4 GB reservation; lifted code accesses it unchecked, and an access to what isn't mapped faults, which a fault handler turns into the runtime's stop naming the guest address (v0.15.0; `-DQILIN_CHECKED_MEMORY=ON` bounds-checks every access instead, for bring-up) | `host/guest_ram.cpp` | as the sister project's. The game uses both kernel windows (D3D's contiguous memory and its write-combined surface locks) |
-| The kernel: memory (virtual, contiguous, pool), critical sections, timers and DPCs, console settings, sections loaded on demand, strings, SHA-1 and HMAC | `host/kernel.cpp`, `kernel_crypto.cpp` | 80 of the kernel's exports; the game's imports are compared against them in step 1 |
+| The kernel: memory (virtual, contiguous, pool), critical sections, timers and DPCs, console settings, sections loaded on demand, strings, SHA-1 and HMAC | `host/kernel.cpp`, `kernel_crypto.cpp` | the sister project's exports and the ones this game added; anything else it calls stops the runtime, named |
 | The scheduler: guest threads on host threads with the Xbox's single-processor rules, waits, events, mutants, DPCs | `host/sched.*` | as the sister project's |
 | The I/O manager: `\Device\CdRom0` over the extracted disc (read-only, names matched without regard to case), the hard disk's partitions as folders of the data folder, symbolic links | `host/kernel_io.cpp` | as the sister project's |
 | `qilin_run` | `host/run.cpp` | new: see below |
-| The renderer, the audio engine, the window, input, sound output, the settings menu | `gfx/`, `audio/`, `platform/`, `ui/` | in since v0.2.0, not yet driven by a game |
+| The renderer, the audio engine, the window, input, sound output, the settings menu | `gfx/`, `audio/`, `platform/`, `ui/` | in since v0.2.0, driven by the game since v0.8.0 |
 
-Since v0.6.0 the controller library is here too (`host/xinput.cpp`), and the game's own native functions (`host/game_native.cpp`); since v0.7.0 DirectSound (`host/dsound.cpp`: the sister project's `docs/audio.md` describes the mixer's design; what differs here is in the file's opening comment and the changelog). All are registered only for the supported build. Not here yet: Direct3D, the XMV player, the aspect and frame-clock hooks.
+Since v0.6.0 the controller library is here too (`host/xinput.cpp`), and the game's own native functions (`host/game_native.cpp`); since v0.7.0 DirectSound (`host/dsound.cpp`: the sister project's `docs/audio.md` describes the mixer's design; what differs here is in the file's opening comment and the changelog). All are registered only for the supported build. Since v0.8.0 Direct3D (`host/d3d.cpp`, `docs/graphics.md`); the XMV player is lifted. Since v0.13.0 the widescreen and language hooks (`host/aspect.cpp`, `host/game_hooks.cpp`).
 
 ## `qilin_run` starts at the entry point
 The sister project's `qilin_run` replaces XAPI's start-up by hand: it calls that game's process initialisation, its initializer tables and its `main` at their addresses. That was written before its scheduler existed.
@@ -52,4 +52,4 @@ This is how every trail was reached (v0.14.0) without playing the stables' tutor
 So the whole path, from an executable through the lifter and each CI compiler to a running native program over the native kernel, is exercised on every push. New kernel work gets a program here.
 
 ## Next
-With the game: its kernel imports against the 80 provided; XbSymbolDatabase names for its XDK build (`tools/gen/xdk_symbols.py`); the first run, providing what each stop names.
+Whatever later scenes call that the opening, the stables and the trails haven't: a stop names it, and the bring-up loop provides it (`CLAUDE.md`).

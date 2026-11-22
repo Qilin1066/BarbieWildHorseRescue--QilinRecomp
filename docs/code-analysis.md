@@ -33,7 +33,7 @@ Still open in the control flow: **73 indirect jumps unresolved** and 9 jump tabl
 Function discovery changed in two ways for this game (both general): a `mov` or `push` of a segment register marks data decoded as code (a false seed at `0x07A120`, inside a `push` of a real function, was kept alive by one); and gaps are seeded again after validation drops a false seed, which had been hiding the real function at `0x07A010`.
 
 ## What is lifted
-`qilin lift`: **6,621 functions, all of them lift** (v0.5.0). 5,250 are the three whole regions; 1,371 are library functions lifted code can reach (XAPI, the C runtime, XGraphics, the WMA decoder), followed from the entry point. 96 call targets have no lifted body and get stubs that stop the runtime, named: the hardware libraries' functions.
+`qilin lift`: **6,621 functions, all of them lift** (v0.5.0; 6,772 since the libraries added later, v0.11.0). 5,250 are the three whole regions; 1,371 are library functions lifted code can reach (XAPI, the C runtime, XGraphics, the WMA decoder), followed from the entry point. 96 call targets have no lifted body and get stubs that stop the runtime, named: the hardware libraries' functions.
 
 The lifter gained, for this game: the one-operand 8-bit multiply (`imul r/m8`, `mul r/m8`), `xlat`, `sfence` (nothing to do), `fstp m80` and `fprem` (the C runtime's `fmod` and number formatting).
 
