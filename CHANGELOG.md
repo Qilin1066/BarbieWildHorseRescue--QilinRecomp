@@ -4,6 +4,25 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-22
+
+The enhancements act on this game, and there is a Windows download.
+
+### Added
+- **Widescreen** (Hor+, 4:3 to 4:1): after the engine builds its projection (`0xF2E60`) its x is squeezed by 4:3 over the picture's shape about the viewport's centre, so every camera keeps its vertical view and sees more at the sides; the engine's visibility test reads the same matrix, so it widens too. 4:3 is untouched (the yard script's frames identical). Checked at 16:9 and 32:9 in the menus, the dressing room and the yard. `docs/graphics.md` has how the engine keeps its camera.
+- **The HUD and menus on wide pictures** follow the HUD setting (edges, middle or stretched): the menus' pre-transformed buttons and text are placed as the in-game HUD is, and a row of tiles across the whole frame (the menus' backdrops) is left whole.
+- **The language setting** chooses the disc's German, French, Spanish or Italian text, which this US build never loads: the setting goes in where the game sets its language (`0x321C0`). The German loading screen isn't on the US disc, so the US one stands in. Voices stay English.
+- **The Windows download** (`tools/player-kit`, built by CI on every push): unpack, double-click `Play Wild Horse Rescue.bat`, choose your extracted disc; it recompiles your own `default.xbe` with the bundled compiler. From a clone, `Play Wild Horse Rescue.bat` and `Update Wild Horse Rescue.bat` build with Visual Studio (`tools/build-wildhorse.ps1`). From GBTGhoulies', not yet run on Windows here.
+- The lifter's hooks for these: `Conventions::before_entry` and `after_return` call native code on entry to, or at the returns of, a named function (`host/game_hooks.cpp`), with a unit test.
+- DirectSound: buffers created with their own memory (`dwBufferBytes`) get zeroed guest memory instead of stopping the runtime.
+
+### Changed
+- **The frame rate**: the game times its frames itself (the time-stamp counter, by the clock rate it measures at start-up), so the frame-rate settings need only the pacing; the sister game's frame clock, which this game doesn't have, is gone, as is `SetPixelShaderConstant` (not in this build). No sister-build address is left in `d3d.cpp`. Time under the settings menu is taken off the counter, so the game's step doesn't jump when it closes. The frame-rate counter calls "Original" the game's own rate.
+- Render resolution (up to 4×) and anisotropic filtering checked in the stables and yard: nothing of this game's needed changing.
+
+### Fixed
+- The language setting was never passed to the runtime.
+
 ## [0.12.1] - 2026-11-22
 
 ### Fixed

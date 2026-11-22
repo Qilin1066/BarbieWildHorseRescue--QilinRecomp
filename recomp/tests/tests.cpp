@@ -818,6 +818,17 @@ int main(int argc, char** argv) {
                               "rt::check_return(c, 0x11005u, 0x11000u); }"));
             CHECK(p->contains("fn_00011100(c); reload();"));  // the other calls as before
         }
+        // Native code before and after a function (Conventions::before_entry, after_return).
+        Conventions hooks;
+        hooks.before_entry = {0x11000u};
+        hooks.after_return = {0x11000u};
+        Lifter hooked(dec, &hooks);
+        auto h = hooked.lift(f.at(0x11000));
+        CHECK(h.has_value());
+        if (h) {
+            CHECK(h->contains("    QILIN_FRAME(0x11000u, c.esp);\n    rt::before_entry(c, 0x11000u);\n"));
+            CHECK(h->contains("writeback(); rt::after_return(c, 0x11000u); return;"));
+        }
     }
     if (f.contains(0x112D0)) {
         auto r = lifter.lift(f.at(0x112D0));  // __ehhandler stub: mov eax, &FuncInfo; jmp __CxxFrameHandler

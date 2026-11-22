@@ -26,6 +26,9 @@ All of it now runs on the game: the analysis, the lift of every function lifted 
 - **A data-pointer seed can start inside a real function's instruction and hide it** (v0.8.x, found by a run: the mini-games called `0x800C0` through a pointer and nothing had been lifted there). A data word equal to `0x800F0` seeded a function in the middle of the instruction at `0x800EE`; the real function at `0x800C0`, known only by an immediate (`push 0x800C0` at `0x80442`), was then explored only up to that false entry, judged unclean and dropped. Now an immediate pointer is always kept as a seed (before, not if it was a function at that moment, so a function dropped later was never tried again), and when one is accepted, weakly-evidenced functions whose entries its own instructions step over are evicted first (`Cfg::evict_misaligned`, once per pointer; `bound_over_misaligned`). On this game that changes exactly one function and takes the game region's unknown bytes from 67 to 23.
 - The Python analysis prototype, the differential test and the checks written against that game's C runtime addresses were left behind. The differential test came over in v0.12.0 with this game's conventions (below).
 
+## Hooks around the game's own functions (v0.13.0)
+Where an enhancement has to adjust what the game passes or computes, `game.hpp`'s conventions name the function: `before_entry` emits `rt::before_entry(c, addr)` on entry, before the function reads its registers, and `after_return` emits `rt::after_return(c, addr)` at each of its returns, once its registers are written back. The runtime's `host/game_hooks.cpp` dispatches them (an address with no hook there stops the runtime); the difftest's harness defines both as nothing, since the original has none. In use: after the engine's projection builder (`0xF2E60`, widescreen) and before the game sets its language (`0x321C0` from `0xE9BCE`, the language setting). A unit test checks the lifter's output for both kinds of convention.
+
 ## Known heuristics that came from the other game
 These are in the code as they were. Each is a property of that game's build that must be measured here, not trusted:
 - **16-byte entries.** A pointer in a data section is a function-pointer candidate only if it is a multiple of 16, and gap seeding only tries 16-aligned starts (`cfg.cpp`). `qilin align` reports how this game's directly-called functions are aligned; if they aren't 16-aligned, both rules change before the function count means anything.
@@ -67,4 +70,4 @@ A second run, float-heavy heaps included (`--variants 4 --trials 16 --seed 2`): 
 Unchecked: an ARM64 host, a UBSan build (`--sanitize`), and mutation checks on this build (the sister's showed planted lifter bugs are caught).
 
 ## Next
-In the order of `roadmap-and-design-targets.md`: the first analysis; `game.hpp` filled in; the decoder cross-check; coverage to zero; every function lifting; the differential test.
+All of the steps (the first analysis, `game.hpp`, the decoder cross-check, coverage to zero, every function lifting, the differential test) are done. Left: the difftest under UBSan, on an ARM64 host, and mutation checks on this build.

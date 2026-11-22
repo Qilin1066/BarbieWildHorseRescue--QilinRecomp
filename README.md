@@ -26,11 +26,18 @@ It has the same requirements and scope as its sister projects, [GBTGhoulies--Qil
 | DirectSound | 🔨 natively over the mixer (v0.7.0), found by name; the movie's sound plays; 3D positioning by the library's own calculator, lifted (v0.11.0) |
 | Direct3D | 🔨 natively over the renderer (v0.8.0), with fixed-function lighting (v0.9.0): the menus, the stable yard, the dressing room, the stables and the mini-games; specular and two-sided lighting (v0.11.0) |
 | The XMV movie player | ✅ lifted whole, through the video overlay (v0.8.0) |
-| Enhancements wired to the game (widescreen, the HUD, frame rate) | to do, after the game plays at original spec |
+| Enhancements wired to the game | ✅ widescreen (Hor+, up to 4:1, culling widened with it), the HUD at the screen's edges, in the middle 4:3 or stretched, render resolution 1× to 4× with anisotropic filtering, the frame rate (the game times its frames itself), and the language: English, German, French, Spanish or Italian text from the disc's own tables (v0.13.0) |
+| Windows download (player kit) | ✅ built by CI on every push (v0.13.0): unpack, double-click `Play Wild Horse Rescue.bat`, choose your extracted disc; it recompiles your own `default.xbe` on your PC |
 
 ## Versions and changes
 
 Every release is recorded in [`CHANGELOG.md`](CHANGELOG.md). Past entries are kept, never rewritten. The version lives in one place, `project(... VERSION ...)` in `CMakeLists.txt`, and `qilin --version` prints it. While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game.
+
+## Playing on Windows
+
+The [Actions](https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/actions/workflows/player-kit.yml) page has a Windows download from every push (the player kit, `tools/player-kit/README.txt`): unpack it, double-click **`Play Wild Horse Rescue.bat`** and choose your extracted disc's folder (the one holding `default.xbe`, `Packages` and `Video`). The first time it recompiles your own `default.xbe` with the bundled compiler (5 to 20 minutes); after that it starts the game. Nothing from the game is in the download.
+
+From a clone of this repository with Visual Studio 2022, **`Play Wild Horse Rescue.bat`** builds and starts the game the same way, and **`Update Wild Horse Rescue.bat`** pulls the latest code first (`tools/build-wildhorse.ps1`).
 
 ## Analysing your copy (Windows, double-click)
 
