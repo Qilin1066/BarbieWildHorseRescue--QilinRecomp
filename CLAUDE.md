@@ -72,9 +72,10 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - After editing `CMakeLists.txt`, run `cmake -S . -B build` again before building one target by name: `cmake --build --target new_target` on a stale tree says there is no such rule.
 - In the v0.2.0 session a request for access to the PC's Downloads folder was refused by the session's own permission rules, not by the owner: the owner has to connect the game's folder from the desktop app ("Add folder").
 
-## Status (v0.10.0)
+## Status (v0.11.0)
 
 - The tools build and their tests pass under GCC 14 and Clang (zig) locally and in CI. The whole game lifts, compiles and starts (v0.5.0); nothing of it has been checked against the original x86 yet.
+- v0.11.0: everything the game is known to call is in: specular and two-sided lighting, DirectSound's 3D positioning (the library's calculator lifted), `KickPushBuffer`, `PersistDisplay`, the memory-unit calls; no unknown bytes left in lifted regions.
 - v0.10.0: virtual time (`--virtual-time`): runs are repeatable, frame for frame. With it a script reaches the stable hand in the yard and talks to her.
 - v0.9.1: all four mini-games (The Races, Coin Roundup, Lasso Challenge, Seagull Beach) play to their results screens. The fixed-function lighting doubled every lit colour (its ADDs' second operand in the wrong slot), which whitened the outdoor ground; vertex programs' 0 × RSQ(0) is now 0, as on the NV2A.
 - v0.9.0: into the game. With scripted presses (`--press`), runs go through the main menu, the New Adventure movie, the stable yard, the dressing room (Barbie in 3D, lit), the stables (choosing a horse), riding round the yard, and the Mini-Games into a race; nothing stops. Found on the way: threads started with a zeroed x87 control word, depth testing off everywhere, this build's frame-buffer flip, and a function hidden by a false one in discovery.

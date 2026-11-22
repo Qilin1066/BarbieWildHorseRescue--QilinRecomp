@@ -4,6 +4,21 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-22
+
+Everything the game is known to call is in: specular and two-sided lighting, DirectSound's 3D positioning, the last four library functions; and the analysis is as complete as it gets without the differential test.
+
+### Added
+- **Specular and two-sided fixed-function lighting** (both stopped the runtime). Read from this build's lighting set-up: each light's colours times the material's, front and back (the back material at device +0xF34, with `BACKAMBIENT` and the back sources); a directional light's half vector towards (0, 0, −1), as the console's runtime writes it (Microsoft's PC documentation has +z); the local viewer only with lights on. The specular power is applied exactly, where the GPU uses a curve the runtime fits to it. Two-sided lighting lights the back with the normal reversed into oB0/oB1, and the pixel stage takes those on the winding `FRONTFACE` doesn't name (a new `two_sided` combiner setting, from `gl_FrontFacing`, with a renderer test); with a vertex program that doesn't write the back colours it stops.
+- **DirectSound's 3D positioning** (3D sounds played unpositioned). The library's own 3D calculator, its full-HRTF installer and the functions it installs, and the head-related filter lookup are lifted (34 functions of pure computation); the native DirectSound keeps the library's listener, I3DL2 listener, 3D voice blocks and voice data in guest memory in its layout, from its own templates, writes them as its setters do, and at a commit runs the calculator and applies the voice data (this build's volume calculation is the sister's formula). The speaker setting comes from XAPI's `XAudioGetSpeakerConfig`, as the library's `DirectSoundCreate` asks it. In the yard the ambient and ground sounds are positioned.
+- Natives for `D3DDevice_KickPushBuffer` (nothing to start), `D3DDevice_PersistDisplay` (S_OK: nothing to keep, no reboot follows), `XMountMUA` and `XUnmountMU` (an empty slot's answer: no memory unit is ever reported).
+
+### Changed
+- Jump-table recognition takes `[ebp + table]` byte index tables (SS-relative by default, flat on the Xbox) and bounds pushed and popped into a register. The lifted regions have no unknown bytes left; heuristic tables went from 9 to 4 (Direct3D's format switches, unbounded in the code itself), every target as before. `docs/code-analysis.md` classifies what stays dynamic: the 73 unresolved indirect jumps are all run-time targets, and two stubs in library code are named and unlikely to be reached.
+
+### Checked
+- With virtual time, runs through the dressing room and stables gave the same frames as before each change, and a run from power-on to the title screen gave 2,400 frames identical to v0.10.0's.
+
 ## [0.10.0] - 2026-11-21
 
 Repeatable runs: virtual time.
