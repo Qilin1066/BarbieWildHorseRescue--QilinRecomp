@@ -114,6 +114,7 @@ struct Buffer {
     // results, the HRTF source's state at +0x7C), and the voice data the
     // calculator writes for it (0x38 bytes, a DS3DVOICEDATA) after it.
     uint32_t block3d = 0;
+    uint32_t own = 0, own_bytes = 0;  // the memory DirectSound gave a buffer created with dwBufferBytes (0: the game's own)
     // A submix (DSBCAPS_MIXIN) buffer's status: it mixes whatever feeds it
     // from the moment it's made, but GetStatus reports it playing only
     // between a Play and a Stop of its own, as the original's does (the
@@ -136,6 +137,7 @@ struct DirectSound {
     std::map<uint32_t, std::unique_ptr<Buffer>> buffers;  // by guest address
     std::vector<uint32_t> spare_objects;                  // guest slots for object headers, free
     std::vector<uint32_t> spare_3d;                       // guest slots for 3D blocks, free
+    std::multimap<uint32_t, uint32_t> spare_memory;       // buffers' own memory, free: bytes -> address
     // The listener's 3D block and the I3DL2 listener after it, as the
     // original keeps them at its object's +0x30 and +0x80 (see 3D below).
     uint32_t listener = 0;
@@ -495,7 +497,6 @@ void create_sound_buffer(rt::Context& c) {
     const uint32_t desc = arg(c, 1), out = arg(c, 2);
     const uint32_t flags = ld(c, desc + 4), bytes = ld(c, desc + 8), wfx = ld(c, desc + 12), bins = ld(c, desc + 16);
     if (flags & 0x80000) unmodelled("IDirectSound_CreateSoundBuffer", "an effects input buffer (DSBCAPS_FXIN)");
-    if (bytes) unmodelled("IDirectSound_CreateSoundBuffer", "a buffer with its own memory (dwBufferBytes != 0)");
     auto b = std::make_unique<Buffer>();
     b->flags = flags;
     if (flags & 0x2000) {  // DSBCAPS_MIXIN: a submix destination, with the format's channels
@@ -505,6 +506,20 @@ void create_sound_buffer(rt::Context& c) {
     }
     b->voice.mix_bins = read_mix_bins(c, bins);
     b->voice.headroom = default_headroom(flags);
+    if (bytes) {
+        // A buffer with its own memory: DirectSound allocates it (silence,
+        // as the library's zeroed pool), and Lock hands out pointers into it.
+        if (flags & 0x2000) unmodelled("IDirectSound_CreateSoundBuffer", "a submix buffer with its own memory");
+        if (!wfx) unmodelled("IDirectSound_CreateSoundBuffer", "a buffer with its own memory and no format");
+        auto& spare = ds().spare_memory;
+        uint32_t mem = 0;
+        if (const auto it = spare.find(bytes); it != spare.end()) mem = it->second, spare.erase(it);
+        else mem = contiguous(bytes, 0, 0xFFFFFFFFu, 0, 4);  // as MmAllocateContiguousMemory: PAGE_READWRITE
+        if (!mem) unmodelled("IDirectSound_CreateSoundBuffer", strf("%u bytes of buffer memory (none left)", bytes));
+        for (uint32_t k = 0; k + 4 <= bytes; k += 4) st(c, mem + k, 0);
+        b->own = mem, b->own_bytes = bytes;
+        b->voice.set_data(mem, bytes);
+    }
     make_3d(c, *b);
     const uint32_t obj = guest_object(c);
     ds().buffers[obj] = std::move(b);
@@ -522,6 +537,7 @@ void buffer_release(rt::Context& c) {
         for (auto& [addr, other] : ds().buffers)
             if (other->output == a) unmodelled("IDirectSoundBuffer_Release", "releasing a submix buffer other buffers still feed");
         if (b.block3d) ds().spare_3d.push_back(b.block3d);
+        if (b.own) ds().spare_memory.emplace(b.own_bytes, b.own);
         ds().buffers.erase(a);
         free_guest_object(a);
     }
@@ -807,7 +823,8 @@ void get_current_position(rt::Context& c) {
 
 // HRESULT IDirectSoundBuffer_Lock(LPDIRECTSOUNDBUFFER, DWORD dwOffset, DWORD dwBytes,
 //     LPVOID* ppvAudioPtr1, LPDWORD pdwAudioBytes1, LPVOID* ppvAudioPtr2, LPDWORD pdwAudioBytes2, DWORD dwFlags):
-// the buffer's data is the game's own memory (SetBufferData), so a lock is
+// the buffer's data is guest memory (the game's, SetBufferData, or its own,
+// from CreateSoundBuffer's dwBufferBytes), so a lock is
 // pointers into it, wrapping at its end: DSBLOCK_FROMWRITECURSOR (1) from
 // the play position, DSBLOCK_ENTIREBUFFER (2) all of it.
 void lock_buffer(rt::Context& c) {
