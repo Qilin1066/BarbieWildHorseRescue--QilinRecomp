@@ -4,6 +4,11 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-22
+
+### Fixed
+- **The differential test could carry state from one trial to the next**: a trial that sent the original to a random address let it run on through data, and Unicorn doesn't report every store such code makes, so the two memories could differ afterwards. A float-heavy run (108,258 trials) had one mismatch from it, in a two-instruction getter, which didn't recur alone. Now nothing outside the code pages is executable in either emulator: such a trial faults where the lifted code traps. The default run: 40,632 trials, 0 mismatches, and over three times faster.
+
 ## [0.12.0] - 2026-11-22
 
 The differential test: every lifted function checked against the original x86, and no mismatch left.

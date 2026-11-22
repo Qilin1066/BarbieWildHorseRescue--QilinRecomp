@@ -45,7 +45,7 @@ from collections import Counter
 import mpmath  # pip install mpmath: the reference for x87 transcendentals (EmuFixups)
 
 from unicorn import (UC_ARCH_X86, UC_ERR_WRITE_PROT, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_WRITE, UC_MODE_32, UC_PROT_ALL,
-                     UC_PROT_EXEC, UC_PROT_READ, Uc, UcError)
+                     UC_PROT_EXEC, UC_PROT_READ, UC_PROT_WRITE, Uc, UcError)
 from unicorn.x86_const import (UC_X86_REG_CR0, UC_X86_REG_CR4, UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_EAX,
                                UC_X86_REG_EBP, UC_X86_REG_ES, UC_X86_REG_FS, UC_X86_REG_GDTR, UC_X86_REG_SS,
                                UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDI, UC_X86_REG_EDX,
@@ -556,25 +556,21 @@ class Runner:
             self.intr = intno
             uc.emu_stop()
         self.uc.hook_add(UC_HOOK_INTR, on_intr)
-        # Where the original first ran outside the code (a return address its
-        # own buffer overrun replaced): such a hook fires only there.
-        self.left_code = None
-
-        def on_outside(uc, a, size, ud):
-            if self.left_code is None and a != SENTINEL:
-                self.left_code = a
-        self.uc.hook_add(UC_HOOK_CODE, on_outside, None, 0, CODE_LO - 1)
-        self.uc.hook_add(UC_HOOK_CODE, on_outside, None, CODE_HI, MEM_SIZE - 1)
         self.write_both(self.base, self.image)
         # Code is read-only: a random pointer that would overwrite the running
         # code makes the trial meaningless (the lifted code can't see it).
-        self.uc.mem_protect(CODE_LO, CODE_HI - CODE_LO, UC_PROT_READ | UC_PROT_EXEC)
+        # Everything else can't be executed: a jump or return to a random
+        # address faults at that address, as the lifted code traps there. Run
+        # on through data, the original could store through instructions
+        # whose writes Unicorn's hooks don't report (its helpers), leaving
+        # the two memories different for later trials.
+        protect_code(self.uc)
 
         # Callee emulator: runs the original bytes of callees that have no
         # lifted body, on the lifted side's memory.
         self.uc2 = Uc(UC_ARCH_X86, UC_MODE_32)
         self.uc2.mem_map_ptr(0, MEM_SIZE, UC_PROT_ALL, C.addressof(self.hmem))
-        self.uc2.mem_protect(CODE_LO, CODE_HI - CODE_LO, UC_PROT_READ | UC_PROT_EXEC)
+        protect_code(self.uc2)
         enable_sse(self.uc2)
         self.uc2_writes = []
         self.uc2.hook_add(UC_HOOK_MEM_WRITE, lambda uc, acc, a, sz, v, ud: self.uc2_writes.append((a, sz)))
@@ -755,7 +751,6 @@ class Runner:
         self.uc2_writes = []
         self.unlifted_fault = ""
         self.intr = None
-        self.left_code = None
         status, why = "ok", ""
         try:
             uc.emu_start(addr, SENTINEL, timeout=UC_TIMEOUT_US, count=MAX_INSNS)
@@ -802,12 +797,11 @@ class Runner:
             result = "skip"  # an unlifted callee ran past the budget
         elif rc == 4:
             result, detail = "fail", err.value.decode()
-        elif rc == 0 and status == "fault" and ctx.ret_to != SENTINEL and ctx.ret_to in (uc_eip(uc), self.left_code):
+        elif rc == 0 and status == "fault" and ctx.ret_to != SENTINEL and uc_eip(uc) == ctx.ret_to:
             # Both overwrote their own return address (random arguments that
             # overrun a local buffer) and went to the same place: the
-            # original faulted fetching there (or ran on from there through
-            # mapped data, which the hook on non-code addresses records),
-            # the lifted code's caller would trap at the return check.
+            # original faulted fetching there (nothing outside the code is
+            # executable), the lifted code's caller would trap at the return check.
             result = "fault-both"
         elif rc == 0 and ctx.ret_to != SENTINEL:
             result, detail = "fail", (f"returns to {ctx.ret_to:08X} instead of its caller (stack imbalance: not a whole function?)"
@@ -893,6 +887,13 @@ class Runner:
                 result = "pass-x87wide"  # equal once the original's 64-bit register value is rounded to double
         self.restore(uc_w + h_w + [(STACK_TOP, len(stack))] + setup_ranges)
         return result, detail, regs
+
+
+def protect_code(uc):
+    """The code pages read and execute, everything else read and write."""
+    uc.mem_protect(0, CODE_LO, UC_PROT_READ | UC_PROT_WRITE)
+    uc.mem_protect(CODE_LO, CODE_HI - CODE_LO, UC_PROT_READ | UC_PROT_EXEC)
+    uc.mem_protect(CODE_HI, MEM_SIZE - CODE_HI, UC_PROT_READ | UC_PROT_WRITE)
 
 
 def uc_eip(uc):

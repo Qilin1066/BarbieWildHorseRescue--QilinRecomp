@@ -47,7 +47,7 @@ The sister project's, brought over with this build's addresses; its `docs/recomp
 difftest.py --qilin build/qilin --xbe default.xbe --work /tmp/qd --cxx g++-14 --trials 8
 ```
 
-About 35 minutes for every function on the cloud workspace's two cores; `--test ADDR,...` runs some, `--reuse` keeps the built library.
+About 10 minutes for every function on the cloud workspace's two cores (v0.12.1), after a build of several minutes; `--test ADDR,...` runs some, `--reuse` keeps the built library.
 
 **This build's settings** (the top of `difftest.py`): the code pages (`0x11000`–`0x20C000`), the C runtime's range for its x87 checks, the shared epilogues that pop a caller's word (`GLUE_POPS`: `_NLG_Notify`'s body, `strchr`'s exit, the x87 maths' epilogues), the 17 C runtime helpers that take their operands on the x87 stack (`X87_ARGS`, found by walking each one's fall-through path, checked by reading them), and the helper that can return to its caller's caller (`RETURNS_PAST`).
 
@@ -58,7 +58,11 @@ About 35 minutes for every function on the cloud workspace's two cores; `--test 
 - **`fyl2x` after `fldln2`** (`0x16D8C0`, `log`): the reference computed with the original's 64-bit ln 2, the lifted code holds the double. The reference now rounds the operands to double first, which is what the lifted registers hold, so it checks the specification.
 - **Random heap doubles near 1e-154** (`0x23420`, a vector normalise): their squares leave double's exponent range, which the original's 15-bit exponent keeps. The check the C runtime already had (a register outside double's range after an x87 instruction skips the trial) now also covers the function under test. Real game data never comes near.
 - **The x87 operand helpers** (3 functions) were run with an empty stack half the time: now listed in `X87_ARGS`. **NaN against NaN** in an x87 register (`fprem` of infinities) counts as `pass-nan`, as in xmm lanes.
-- **Entries that run in another function's frame** (10): the secondary entry points and the parent's code past a `__finally` block that the CFG split off (`call __SEH_epilog; ret` tails), which return through a frame a trial can't build. `qilin lift` now writes them out (`gen/secondary.txt`, `gen/tail_only.txt`); a stack imbalance there counts as `fragment`. And a trial where both versions overran a buffer onto their return address counts as faulting in both once the original's first fetch outside the code is that address (a hook on non-code addresses records it; before, the original ran on through mapped data and the two runs looked different).
+- **Entries that run in another function's frame** (10): the secondary entry points and the parent's code past a `__finally` block that the CFG split off (`call __SEH_epilog; ret` tails), which return through a frame a trial can't build. `qilin lift` now writes them out (`gen/secondary.txt`, `gen/tail_only.txt`); a stack imbalance there that isn't a fault in both counts as `fragment`.
+
+**Only the code is executable** (v0.12.1). Both emulators map everything outside the code pages read and write, not execute. A trial whose random state sends the original to a random address (a return address its own buffer overrun replaced, a call through a random pointer) now faults there, as the lifted code traps there. Before, the original ran on through whatever data was mapped, and once, in a float-heavy run, stored through an instruction whose write Unicorn's hook doesn't report: the two memories differed afterwards, and a two-instruction getter later in the batch (`0xC64E0`) read a different word in each. It didn't recur on its own or with its batch, since which trials run depends on the per-function time cap.
+
+A second run, float-heavy heaps included (`--variants 4 --trials 16 --seed 2`): 108,258 trials, 4,777 functions exercised, that one mismatch, which led to the change above; the default run after it: 40,632 trials, 0 mismatches, in 10 minutes (no time spent running data).
 
 Unchecked: an ARM64 host, a UBSan build (`--sanitize`), and mutation checks on this build (the sister's showed planted lifter bugs are caught).
 

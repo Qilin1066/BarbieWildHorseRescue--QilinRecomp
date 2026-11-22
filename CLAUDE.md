@@ -89,7 +89,7 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 1. Further into the game: out of the dressing room, the stables, the first ride (`--press` scripts the controller; the dressing room's outfit menu is where v0.8.x's runs stop going forward). **Read `docs/graphics.md` first.** Every Direct3D function the game calls is in (v0.11.0). Addresses in `d3d.cpp` written `unlocated(...)` are the sister build's and must be found here before that code can run.
 2. DirectSound: 3D is in (v0.11.0: the library's calculator lifted, its blocks in guest memory, `dsound.cpp` under 3D). Check notifications and buffers with their own memory (`dwBufferBytes != 0` stops today) once sounds play.
 3. Memory units: `XMountMUA`/`XUnmountMU` answer as for an empty slot (v0.11.0); saving to one would need them modelled.
-4. The differential test passes (v0.12.0). Rerun it after any lifter or analysis change (`docs/recompiler-core.md`, about 35 minutes); still to do: a `--sanitize` run, and mutation checks on this build.
+4. The differential test passes (v0.12.0). Rerun it after any lifter or analysis change (`docs/recompiler-core.md`, about 10 minutes plus the build); still to do: a `--sanitize` run, and mutation checks on this build.
 5. Static analysis is as far as it goes (v0.11.0, `docs/code-analysis.md`): no unknown bytes in lifted regions, the 73 unresolved jumps are run-time targets, 4 heuristic tables are unbounded in the code itself, two library stubs are named and unlikely to be reached.
 6. The disc's files for runs past start-up (stage `Packages/` in batches, or run on the owner's PC); the player kit and `Play Wild Horse Rescue.bat`.
 
