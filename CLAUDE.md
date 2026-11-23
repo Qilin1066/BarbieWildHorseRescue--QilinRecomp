@@ -79,8 +79,9 @@ Before a milestone commit: tests pass, warnings are clean (`QILIN_WERROR`) under
 - After editing `CMakeLists.txt`, run `cmake -S . -B build` again before building one target by name: `cmake --build --target new_target` on a stale tree says there is no such rule.
 - In the v0.2.0 session a request for access to the PC's Downloads folder was refused by the session's own permission rules, not by the owner: the owner has to connect the game's folder from the desktop app ("Add folder").
 
-## Status (v0.15.0)
+## Status (v0.16.0)
 
+- v0.16.0: DirectSound-owned buffers cleared in full when reused, zero-frame mixing kept clear of empty buffers, the fault handler installed once (no self-chaining), kit rebuilds by content identity, the launcher starting the game directly (`docs/validation-0.16.md`).
 - v0.15.0: guest memory accesses are unchecked (a fault handler in `guest_ram.cpp` stops naming the guest address; `-DQILIN_CHECKED_MEMORY=ON` checks every access, for bring-up); the docs' open questions answered; `tools/build-wildhorse.sh` builds and runs from a clone on Linux and macOS (no prebuilt download there: lifting needs a compiler on the player's machine, and only the Windows kit bundles one). The fault handler, the x87 control-word order and DirectSound's own-memory buffers were ported back to GBTGhoulies the same day.
 - v0.14.0: all nine trails (Forest, Snowy Mountains and Shoreline, three each) load and ride without a stop, reached with `QILIN_POKE` (a new debugging aid with `QILIN_DUMP_RAM`). Their packages are staged in the cloud workspace now.
 - v0.13.0: the enhancements are this game's: widescreen (the engine's projection widened after `0xF2E60` builds it, culling with it), the HUD and menus placed by the HUD setting, render resolution and AF checked, the frame rate (the game times its frames from rdtsc: nothing to replace), the language (the disc's German, French, Spanish and Italian tables, which this US build never loads). DirectSound buffers with their own memory. The Windows download (player kit) is built by CI. The lifter has before-entry and after-return hooks for these.
