@@ -10,6 +10,15 @@ All notable changes to this project are recorded here. The format follows [Keep 
 ### Fixed
 - The launcher's file hashes resolve a relative path against PowerShell's current folder, as `Get-FileHash` did; .NET alone resolves against the process's folder.
 
+## [0.16.1] - 2026-11-25
+
+### Fixed
+- NtWriteFile resolves FILE_WRITE_TO_END_OF_FILE to the actual end of the file and advances the file position from there. Invalid offsets and failed writes leave the maintained position unchanged.
+- NtFlushBuffersFile returns an I/O error when the host stream cannot flush, instead of reporting success. A preceding read reaching EOF remains harmless.
+
+### Tests
+- Added append and maintained-position checks through the kernel's real I/O entry points, plus isolated stream tests for append, invalid offsets and injected flush failures.
+
 ## [0.16.0] - 2026-11-22
 
 ### Fixed
@@ -271,3 +280,4 @@ The start of the project: the tools that read the game. Nothing runs yet, and th
 - The coverage unit test pins the exact accounting of the synthetic `.text`; before, its region didn't fit the section and no unknown byte was ever counted.
 
 [0.1.0]: https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/commits/main
+

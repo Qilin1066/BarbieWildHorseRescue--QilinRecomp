@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(BarbieWildHorseRescue--QilinRecomp VERSION 0.16.0 LANGUAGES C CXX)
+project(BarbieWildHorseRescue--QilinRecomp VERSION 0.16.1 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -120,6 +120,9 @@ target_compile_definitions(qilin PRIVATE QILIN_VERSION="${PROJECT_VERSION}")
 
 # ---- Tests (no game files needed) ----
 enable_testing()
+add_executable(qilin_file_io_tests recomp/runtime/host/file_io_tests.cpp)
+target_link_libraries(qilin_file_io_tests PRIVATE qilin_warnings)
+add_test(NAME qilin_file_io_tests COMMAND qilin_file_io_tests)
 add_executable(qilin_tests recomp/tests/tests.cpp)
 target_link_libraries(qilin_tests PRIVATE qilin_core qilin_warnings)
 qilin_tool(qilin_tests)
@@ -386,3 +389,4 @@ qilin_add_program(hello "the entry point returned 42")
 qilin_add_program(files "the entry point returned 1818")
 # A kernel function the runtime doesn't provide stops it, named, with its caller.
 qilin_add_program(missing "no replacement for kernel DbgPrint \\(ordinal 8\\), called from 0001100B")
+

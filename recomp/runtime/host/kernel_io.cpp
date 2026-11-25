@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "host.hpp"
+#include "file_io.hpp"
 #include "sched.hpp"
 #include "strf.hpp"
 
@@ -509,12 +510,9 @@ void transfer(rt::Context& c, bool write, const char* fn) {
     }
     uint32_t done = 0, status = kSuccess;
     if (write) {
-        h->file->clear();
-        h->file->seekp(std::streamoff(off));
-        h->file->write(reinterpret_cast<const char*>(c.mem + buf), len);
-        h->file->flush();
-        done = *h->file ? len : 0;
-        if (!*h->file) status = kAccessDenied;
+        const bool written = file_io::write(*h->file, off, reinterpret_cast<const char*>(c.mem + buf), len);
+        done = written ? len : 0;
+        if (!written) status = kAccessDenied;
     } else {
         const uint64_t size = host_size(h->host);
         if (off >= size && len) {
@@ -526,7 +524,7 @@ void transfer(rt::Context& c, bool write, const char* fn) {
             done = uint32_t(h->file->gcount());
         }
     }
-    h->position = off + done;
+    if (status == kSuccess) h->position = off + done;
     io_status(c, iosb, status, done);
     if (event_object) sched::set_event(event_object);
     if (apc) sched::queue_apc_self(apc, arg(c, 3), iosb, 0);
@@ -538,9 +536,9 @@ void nt_write_file(rt::Context& c) { transfer(c, true, "NtWriteFile"); }
 // NTSTATUS NtFlushBuffersFile(HANDLE, PIO_STATUS_BLOCK) (198)
 void nt_flush_buffers_file(rt::Context& c) {
     Handle* h = find(arg(c, 0));
-    if (h && h->file) h->file->flush();
-    io_status(c, arg(c, 1), h ? kSuccess : kInvalidHandle, 0);
-    ret(c, h ? kSuccess : kInvalidHandle, 8);
+    const uint32_t status = !h ? kInvalidHandle : h->file && !file_io::flush(*h->file) ? kAccessDenied : kSuccess;
+    io_status(c, arg(c, 1), status, 0);
+    ret(c, status, 8);
 }
 
 // ---------------------------------------------------------------- information
@@ -979,3 +977,4 @@ void register_kernel_io(const IoConfig& cfg) {
 void add_disc_fallback(const std::string& missing, const std::string& stand_in) { disc_fallbacks()[lower(missing)] = stand_in; }
 
 }  // namespace qilin::host
+

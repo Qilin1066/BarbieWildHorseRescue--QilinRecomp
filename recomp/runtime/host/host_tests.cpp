@@ -260,12 +260,19 @@ int main() {
         CHECK(g.u32(iosb + 4) == 2);  // FILE_CREATED
         const uint32_t w = g.u32(handle), text = g.bytes("abc", 3);
         CHECK(g.call("NtWriteFile", {w, 0, 0, 0, iosb, text, 3, 0}) == 0 && g.u32(iosb + 4) == 3);
+        // FILE_WRITE_TO_END_OF_FILE, then the maintained file position.
+        g.put32(off, 0xFFFFFFFFu);
+        g.put32(off + 4, 0xFFFFFFFFu);
+        CHECK(g.call("NtWriteFile", {w, 0, 0, 0, iosb, text, 3, off}) == 0 && g.u32(iosb + 4) == 3);
+        CHECK(g.call("NtWriteFile", {w, 0, 0, 0, iosb, text, 3, 0}) == 0 && g.u32(iosb + 4) == 3);
+        CHECK(g.call("NtFlushBuffersFile", {w, iosb}) == 0 && g.u32(iosb) == 0);
+        CHECK(g.call("NtFlushBuffersFile", {0xFFFFFFFFu, iosb}) == 0xC0000008u && g.u32(iosb) == 0xC0000008u);
         CHECK(g.call("NtClose", {w}) == 0);
         std::string saved;
         std::getline(std::ifstream(root / "hdd" / "partition1" / "save.dat", std::ios::binary), saved);
-        CHECK(saved == "abc");
+        CHECK(saved == "abcabcabc");
         CHECK(g.call("NtQueryFullAttributesFile", {g.attributes("\\Device\\Harddisk0\\Partition1\\SAVE.DAT"), buf}) == 0);
-        CHECK(g.u32(buf + 40) == 3 && g.u32(buf + 48) == 0x80);  // EndOfFile; FILE_ATTRIBUTE_NORMAL
+        CHECK(g.u32(buf + 40) == 9 && g.u32(buf + 48) == 0x80);  // EndOfFile; FILE_ATTRIBUTE_NORMAL
 
         // Formatting a cache partition: the FATX header empties it and sets
         // its cluster size, which the volume then reports.
@@ -485,3 +492,4 @@ int main() {
     else std::printf("all host tests passed\n");
     return failures != 0;
 }
+
