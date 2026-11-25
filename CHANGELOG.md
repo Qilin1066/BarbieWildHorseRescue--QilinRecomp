@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+### Changed
+- README rewritten to the layout shared by the QilinRecomp projects: what works and how to build and play it, without the development history.
+
 ### Fixed
 - The launcher's file hashes resolve a relative path against PowerShell's current folder, as `Get-FileHash` did; .NET alone resolves against the process's folder.
 
