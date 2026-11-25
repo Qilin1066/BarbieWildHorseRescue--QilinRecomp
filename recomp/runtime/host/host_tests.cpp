@@ -273,6 +273,8 @@ int main() {
         CHECK(saved == "abcabcabc");
         CHECK(g.call("NtQueryFullAttributesFile", {g.attributes("\\Device\\Harddisk0\\Partition1\\SAVE.DAT"), buf}) == 0);
         CHECK(g.u32(buf + 40) == 9 && g.u32(buf + 48) == 0x80);  // EndOfFile; FILE_ATTRIBUTE_NORMAL
+        g.put32(off, 0);
+        g.put32(off + 4, 0);  // later raw-device tests use ordinary offsets
 
         // Formatting a cache partition: the FATX header empties it and sets
         // its cluster size, which the volume then reports.
