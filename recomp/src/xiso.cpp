@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 
+#include "path.hpp"
 #include "strf.hpp"
 
 namespace qilin {
@@ -33,7 +34,7 @@ bool same_name(std::string_view a, std::string_view b) {
 }  // namespace
 
 std::expected<Xiso, std::string> Xiso::open(const std::string& path) {
-    auto f = std::make_shared<std::ifstream>(path, std::ios::binary);
+    auto f = std::make_shared<std::ifstream>(native_path(path), std::ios::binary);
     if (!*f) return std::unexpected("cannot open " + path);
     f->seekg(0, std::ios::end);
     const std::streamoff end = f->tellg();

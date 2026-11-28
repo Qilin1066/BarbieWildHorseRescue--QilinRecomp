@@ -34,6 +34,7 @@
 #include "fsr/fsr_constants.hpp"
 #include "gfx.hpp"
 #include "nv2a_shaders.hpp"
+#include "path.hpp"
 #include "spirv.hpp"
 #include "texture.hpp"
 #include "vsh.hpp"
@@ -1048,7 +1049,7 @@ void VulkanRenderer::submit(VkSemaphore wait, VkSemaphore signal) {
 void VulkanRenderer::load_pipeline_cache() {
     std::vector<char> data;
     if (!config_.pipeline_cache.empty()) {
-        std::ifstream in(config_.pipeline_cache, std::ios::binary);
+        std::ifstream in(qilin::native_path(config_.pipeline_cache), std::ios::binary);
         if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         VkPhysicalDeviceProperties props{};
         vkGetPhysicalDeviceProperties(gpu_, &props);
@@ -1074,7 +1075,8 @@ void VulkanRenderer::save_pipeline_cache() {
     if (vkGetPipelineCacheData(device_, pipeline_cache_, &size, nullptr) != VK_SUCCESS || !size) return;
     std::vector<char> data(size);
     if (vkGetPipelineCacheData(device_, pipeline_cache_, &size, data.data()) != VK_SUCCESS) return;
-    const std::filesystem::path to(config_.pipeline_cache), tmp = to.string() + ".new";
+    const std::filesystem::path to = qilin::native_path(config_.pipeline_cache);
+    const std::filesystem::path tmp = std::filesystem::path(to).concat(".new");
     std::error_code ec;
     std::filesystem::create_directories(to.parent_path(), ec);
     {

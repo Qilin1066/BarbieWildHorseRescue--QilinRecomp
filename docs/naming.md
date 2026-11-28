@@ -14,7 +14,8 @@
 | The settings file | `wildhorserescue.ini`, in the data folder | After the game |
 | The settings menu | F1 or Esc (controller: Back + Start); Controls, Display and Game pages; pauses the game; saves on close | The other recomps' menu (Dear ImGui), kept in step with them: see `roadmap-and-design-targets.md` |
 | The Windows launchers | `Play Wild Horse Rescue.bat`, `Update Wild Horse Rescue.bat`; `Analyse game.bat` until the game runs | As `Play Ghoulies.bat` and `Update Ghoulies.bat` |
-| The Windows download | `BarbieWildHorseRescue--QilinRecomp-<version>-windows-x64.zip` | After the project |
+| The downloads | `BarbieWildHorseRescue--QilinRecomp-<version>-windows-x64.zip`, `-linux-x86_64.tar.gz`, `-linux-arm64.tar.gz`, `-macos.dmg` | After the project |
+| The downloads' launcher | `Play Wild Horse Rescue.exe` (Windows), `Play Wild Horse Rescue` (Linux), `Wild Horse Rescue.app` (macOS) | The shared launcher's `Play <title>`; the title is the short name because the whole one has a colon, which Windows file names can't hold |
 | Lifted functions | `fn_<address>` | Named by their address in the original XBE; real names come from analysis later |
 
 The game executable is `qilin_run` while the runtime is brought up, as in the sister projects; it takes the game's name with the first player release.

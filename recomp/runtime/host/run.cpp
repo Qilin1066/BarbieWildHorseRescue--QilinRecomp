@@ -27,6 +27,7 @@
 #include "audio_out.hpp"
 #include "build.hpp"
 #include "clock.hpp"
+#include "command_line.hpp"
 #include "game_file.hpp"
 #include "host.hpp"
 #include "input.hpp"
@@ -57,7 +58,12 @@ uint32_t tls_size(const rt::Mem& m, uint32_t dir) {
 
 }  // namespace
 
+// Its arguments are UTF-8 everywhere (command_line.hpp: on Windows, read
+// from the UTF-16 command line), so a disc folder with any name opens.
 int main(int argc, char** argv) {
+    const qilin::CommandLine command_line(argc, argv);
+    argc = command_line.count();
+    argv = command_line.values();
     const char* path = nullptr;
     const char* game_dir = nullptr;
     const char* data_dir = nullptr;
@@ -240,7 +246,7 @@ int main(int argc, char** argv) {
     if (supported) {
         host::register_game_natives();
         // The settings (wildhorserescue.ini in the data folder): written with the defaults the first time.
-        const std::filesystem::path data_folder = data_dir ? std::filesystem::path(data_dir) : platform::default_data_folder();
+        const std::filesystem::path data_folder = data_dir ? qilin::native_path(data_dir) : platform::default_data_folder();
         static platform::Settings settings = platform::load_settings(data_folder);
         fullscreen = fullscreen || settings.fullscreen;
         if (!audio_channels) audio_channels = settings.channels;
@@ -250,7 +256,7 @@ int main(int argc, char** argv) {
         const float aspect = host::game_aspect_ratio(platform::aspect_ratio(settings, headless ? 0.0f : platform::Window::main_screen_aspect()));
         host::set_game_aspect(m, aspect, false);
         d3d.settings = &settings;
-        d3d.settings_folder = data_folder.string();
+        d3d.settings_folder = qilin::utf8_path(data_folder);
         // The window: where there's no display, the game still runs and draws.
         static std::unique_ptr<platform::Window> window;
         if (!headless) {
@@ -270,7 +276,7 @@ int main(int argc, char** argv) {
         d3d.input = input.get();
         host::register_xinput(input.get());
         // Outside the partitions, so the game's disk never sees it.
-        d3d.pipeline_cache = (data_folder / "vulkan_pipelines.cache").string();
+        d3d.pipeline_cache = qilin::utf8_path(data_folder / "vulkan_pipelines.cache");
         host::register_d3d(d3d);
         // Sound: the mixer's output to the default playback device, unless asked not to.
         static std::unique_ptr<platform::AudioOut> sound;
@@ -281,13 +287,13 @@ int main(int argc, char** argv) {
         host::set_audio_surround(sound && sound->channels() == 6);
         host::register_dsound(dump_audio, sound.get());
     }
-    std::filesystem::path disc = game_dir ? std::filesystem::path(game_dir)
-                                 : std::filesystem::is_directory(path) ? std::filesystem::path(path)
-                                                                       : std::filesystem::path(path).parent_path();
+    std::filesystem::path disc = game_dir ? qilin::native_path(game_dir)
+                                 : std::filesystem::is_directory(qilin::native_path(path)) ? qilin::native_path(path)
+                                                                                       : qilin::native_path(path).parent_path();
     if (disc.empty()) disc = ".";
-    const std::filesystem::path data = data_dir ? std::filesystem::path(data_dir) : platform::default_data_folder();
+    const std::filesystem::path data = data_dir ? qilin::native_path(data_dir) : platform::default_data_folder();
     host::register_kernel_io({disc, data});
-    std::printf("qilin_run: disc %s, hard disk %s\n", disc.string().c_str(), data.string().c_str());
+    std::printf("qilin_run: disc %s, hard disk %s\n", qilin::utf8_path(disc).c_str(), qilin::utf8_path(data).c_str());
 
     // The first thread: its information block (fs:[0] = end of the exception
     // chain) and the x87 control word the kernel starts a thread with. The

@@ -9,6 +9,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "path.hpp"
 #include "strf.hpp"
 
 static_assert(std::endian::native == std::endian::little,
@@ -92,7 +93,7 @@ std::string utf16le_to_utf8(std::span<const uint8_t> p, size_t max_units) {
 }  // namespace
 
 std::expected<Xbe, std::string> Xbe::load(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(native_path(path), std::ios::binary);
     if (!f) return std::unexpected("cannot open " + path);
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return parse(data);

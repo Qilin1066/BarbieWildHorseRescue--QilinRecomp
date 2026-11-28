@@ -5,9 +5,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <iterator>
 #include <print>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -16,6 +19,7 @@
 #include "cfg.hpp"
 #include "decoder.hpp"
 #include "guest.hpp"
+#include "identify.hpp"
 #include "json.hpp"
 #include "game.hpp"
 #include "lifter.hpp"
@@ -314,6 +318,90 @@ Xiso::ReadFn reader(const std::vector<uint8_t>& img, uint64_t partition = 0) {
         for (size_t k = 0; k < out.size(); ++k) out[k] = off + k < partition ? uint8_t(0) : img[size_t(off + k - partition)];
         return true;
     };
+}
+
+// The launcher's contract (identify.hpp): the supported build, another
+// game, another release, an incomplete folder, a disc image not yet
+// extracted, and what can't be read.
+void test_identify() {
+    namespace fs = std::filesystem;
+    const SupportedBuild& b = kWildHorseRescue;
+    auto with = [](uint32_t title_id, uint32_t timestamp, uint32_t region) {
+        auto d = make_xbe();
+        put32(d, 0x114, timestamp);
+        put32(d, 0x408, title_id);
+        put32(d, 0x4A0, region);  // the certificate's game regions
+        return d;
+    };
+    const auto right = with(b.title_id, b.timestamp, 3);  // USA and Japan, as the disc's
+    Identity i = identify_xbe(right, "");
+    CHECK(i.code == 0 && i.ok && i.title == "Barbie Horse Adventures: Wild Horse Rescue (USA)" && i.id == "VU-042" && i.version == "0");
+    CHECK(i.message == "This is Barbie Horse Adventures: Wild Horse Rescue (USA), VU-042 (built 26 September 2003): the right disc.");
+
+    // Another game, named from its certificate.
+    i = identify_xbe(with(0x4D530053u, b.timestamp, 1), "");
+    CHECK(i.code == 3 && !i.ok && i.id == "MS-083" && i.title == "T\xF0\x9F\x98\x80 (USA)");
+    CHECK(i.message.starts_with("This is T\xF0\x9F\x98\x80 (USA, MS-083), not Barbie Horse Adventures: Wild Horse Rescue.") &&
+          i.message.ends_with("This download is for Barbie Horse Adventures: Wild Horse Rescue (USA), VU-042 (built 26 September 2003)."));
+    // Another release of this one: another region, another build date.
+    i = identify_xbe(with(b.title_id, b.timestamp + 40 * 86400, 4), "");
+    CHECK(i.code == 3 && !i.ok && i.id == "VU-042" && i.title == "T\xF0\x9F\x98\x80 (Europe)");
+    CHECK(i.message.starts_with(
+        "This is Barbie Horse Adventures: Wild Horse Rescue (Europe), but another release of it: its default.xbe was built 5 November 2003"));
+    i = identify_xbe(with(0x12345678u, b.timestamp, 0), "");
+    CHECK(i.code == 3 && i.id == "12345678" && i.message.contains("(12345678), not "));
+
+    i = identify_xbe(right, "Video");
+    CHECK(i.code == 2 && !i.ok && i.title == "Barbie Horse Adventures: Wild Horse Rescue (USA)" && i.message.contains("no Video folder"));
+    CHECK(identify_xbe(std::vector<uint8_t>{9, 0}, "").code == 2);
+    CHECK(xbe_date(0) == "1 January 1970" && xbe_date(951782400) == "29 February 2000" && xbe_date(b.timestamp) == "26 September 2003");
+
+    // On folders, as the launcher runs it (a Unicode name, any case).
+    const fs::path top = fs::temp_directory_path() / fs::path(u8"wildhorse-identify-\u4fdd\u5b58");
+    std::error_code ec;
+    fs::remove_all(top, ec);
+    const fs::path dir = top / "disc";
+    fs::create_directories(dir / "packages");
+    auto put = [](const fs::path& path, std::span<const uint8_t> bytes) {
+        std::ofstream output(path, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    };
+    put(dir / "Default.XBE", right);
+    i = identify(dir);
+    CHECK(i.code == 2 && i.message.contains("no Video folder"));
+    fs::create_directories(dir / "VIDEO");
+    CHECK(identify(dir).code == 0);
+    CHECK(identify(dir, "Barbie Horse Adventures: Wild Horse Rescue (USA)").code == 0);
+    CHECK(identify(dir, "Barbie Horse Adventures: Wild Horse Rescue (Europe)").code == 2);
+    CHECK(identify(dir / "missing").code == 2);
+    i = identify(dir / "packages");
+    CHECK(i.code == 2 && i.message.starts_with("There's no default.xbe in this folder.") && i.message.contains("extract-xiso"));
+    // The folder above the extracted disc: told which folder to choose.
+    i = identify(top);
+    CHECK(i.code == 2 && i.message == "There's no default.xbe in this folder, but the folder disc inside it has one: choose that folder.");
+    // A disc image, not yet extracted: chosen itself, or the folder it is in.
+    const fs::path images = top / "images";
+    fs::create_directories(images);
+    put(images / "Wild Horse Rescue.xiso.iso", make_disc());
+    i = identify(images);
+    CHECK(i.code == 2 && i.message.starts_with("This folder holds the disc image Wild Horse Rescue.xiso.iso, not the extracted disc."));
+    i = identify(images / "Wild Horse Rescue.xiso.iso");
+    CHECK(i.code == 2 && i.message.starts_with("This is the disc image, not a folder: extract it first"));
+    const uint8_t two[] = {9, 0};
+    put(images / "notes.txt", two);
+    i = identify(images / "notes.txt");
+    CHECK(i.code == 2 && i.message.starts_with("This is a file, not a folder."));
+    // A damaged default.xbe; then default.xbe chosen itself (its folder is the disc's).
+    put(dir / "Default.XBE", two);
+    CHECK(identify(dir).code == 2);
+    fs::remove(dir / "Default.XBE", ec);
+    put(dir / "default.xbe", right);
+    CHECK(identify(dir / "default.xbe").code == 0);
+    fs::remove_all(top, ec);
+
+    Identity quoted;
+    quoted.message = "a \"b\"\n";
+    CHECK(to_json(quoted) == "{\"ok\": false, \"title\": \"\", \"id\": \"\", \"version\": \"\", \"message\": \"a \\\"b\\\"\\n\"}\n");
 }
 
 // The MMX lane helpers the lifter emits (rt::mmx), against values worked by hand.
@@ -934,6 +1022,7 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------- disc image
     test_xiso();
     test_mmx();
+    test_identify();
 
     if (failures) {
         std::println(stderr, "{} check(s) failed", failures);

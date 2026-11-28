@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -272,8 +274,14 @@ Settings parse_settings(const std::string& text, std::vector<std::string>& warni
 }
 
 std::filesystem::path default_data_folder() {
+    // Windows: the variable as UTF-16, so a user name outside the code page works.
     auto env = [](const char* n) -> std::filesystem::path {
+#if defined(_WIN32)
+        const std::wstring key(n, n + std::strlen(n));
+        const wchar_t* v = _wgetenv(key.c_str());
+#else
         const char* v = std::getenv(n);
+#endif
         return v && *v ? std::filesystem::path(v) : std::filesystem::path();
     };
 #if defined(_WIN32)
