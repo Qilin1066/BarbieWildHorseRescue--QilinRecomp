@@ -17,10 +17,16 @@
 //                                             lift to C++ (generated code: never commit it)
 //   qilin image    <game> <out.bin>           flat guest image (for the differential tests)
 //   qilin coverage <game> [--list]            byte accounting: code / tables / padding / unknown
+//   qilin identify <disc folder> --json [--build <title>]
+//                                             what the player's extracted disc is, as one JSON
+//                                             object (identify.hpp): exit 0 the supported build,
+//                                             3 another game or release, 2 unusable
 //
 // Every command that reads the executable refuses a build other than the
 // supported one (game.hpp) unless given --any-build; until the supported
 // build's hash is recorded, any build is read and `info` says so.
+// Paths are UTF-8 (on Windows the command line is read as UTF-16:
+// command_line.hpp), so a folder with any name works.
 // Exit status is non-zero on any error; nothing fails silently.
 #include <array>
 #include <algorithm>
@@ -42,9 +48,11 @@
 #include <vector>
 
 #include "cfg.hpp"
+#include "command_line.hpp"
 #include "decoder.hpp"
 #include "game.hpp"
 #include "game_file.hpp"
+#include "identify.hpp"
 #include "lifter.hpp"
 #include "sha256.hpp"
 #include "xbe.hpp"
@@ -112,6 +120,7 @@ int usage() {
                "  qilin lift     <game> --out <dir> [--range lo-hi] [--only addr]\n"
                "  qilin image    <game> <out.bin>\n"
                "  qilin coverage <game> [--list]   (exit 3 while any lifted byte is unaccounted for)\n"
+               "  qilin identify <disc folder> --json [--build <title>]\n"
                "  qilin --version\n"
                "  --any-build: read an executable that is not the supported build\n");
     return 2;
@@ -140,13 +149,17 @@ void write_file(const std::filesystem::path& path, std::string_view s) {
         if (old && std::string(std::istreambuf_iterator<char>(old), {}) == s) return;
     }
     std::ofstream f(path, std::ios::binary);
-    if (!f || !f.write(s.data(), std::streamsize(s.size()))) throw Failure{"cannot write " + path.string()};
+    if (!f || !f.write(s.data(), std::streamsize(s.size()))) throw Failure{"cannot write " + utf8_path(path)};
 }
 
 using File = std::unique_ptr<FILE, int (*)(FILE*)>;
 File open_out(std::optional<std::string_view> path) {
     if (!path) return File(stdout, [](FILE*) { return 0; });
+#ifdef _WIN32
+    FILE* f = _wfopen(native_path(*path).c_str(), L"wb");
+#else
     FILE* f = std::fopen(std::string(*path).c_str(), "wb");
+#endif
     if (!f) throw Failure{std::format("cannot write {}", *path)};
     return File(f, &std::fclose);
 }
@@ -262,7 +275,7 @@ int cmd_lift(const Xbe& xbe, Decoder& dec, std::span<const std::string_view> arg
     cfg.run();
     const Conventions conv = g_supported ? game::conventions() : Conventions{};
     Lifter lifter(dec, &conv);
-    const std::filesystem::path dir(*outdir);
+    const std::filesystem::path dir = native_path(*outdir);
     std::filesystem::create_directories(dir);
 
     std::vector<uint32_t> done;
@@ -436,13 +449,13 @@ int cmd_extract(const std::string& path, std::span<const std::string_view> args)
         return t;
     };
     const std::string want = lower(only);
-    const std::filesystem::path root(*outdir);
+    const std::filesystem::path root = native_path(*outdir);
     size_t n = 0;
     uint64_t bytes = 0;
     for (const XisoFile& f : iso->files()) {
         const std::string lp = lower(f.path);
         if (!want.empty() && lp != want && !lp.starts_with(want + "/")) continue;
-        const std::filesystem::path dest = root / std::filesystem::path(f.path);
+        const std::filesystem::path dest = root / native_path(f.path);
         if (f.directory) {
             std::filesystem::create_directories(dest);
             continue;
@@ -455,8 +468,39 @@ int cmd_extract(const std::string& path, std::span<const std::string_view> args)
         bytes += f.size;
     }
     if (n == 0 && !want.empty()) throw Failure{std::format("{}: nothing on the disc is named {}", path, only)};
-    std::println("extracted {} files, {} bytes, to {}", n, bytes, root.string());
+    std::println("extracted {} files, {} bytes, to {}", n, bytes, utf8_path(root));
     return 0;
+}
+
+// The launcher's contract (identify.hpp): JSON whatever happens, and only
+// exit codes 0, 3 and 2.
+int cmd_identify(int argc, char** argv) {
+    std::optional<std::string> path, build;
+    bool json = false;
+    std::string problem;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view a = argv[i];
+        if (a == "--json") json = true;
+        else if (a == "--build" && i + 1 < argc) build = argv[++i];
+        else if (!a.starts_with("-") && !path) path = std::string(a);
+        else problem = std::format("identify: unexpected argument {}", a);
+    }
+    if (!path) problem = "identify takes one folder";
+    if (!json) problem = "identify needs --json";
+    Identity id;
+    if (!problem.empty()) {
+        id.message = problem;
+    } else {
+        try {
+            id = identify(native_path(*path), build.value_or(""));
+        } catch (const std::exception& e) {
+            id = Identity{};
+            id.message = std::format("The recompiler failed: {}.", e.what());
+        }
+    }
+    std::print("{}", to_json(id));
+    std::fflush(stdout);
+    return id.code;
 }
 
 int run(std::string_view cmd, const std::string& path, std::span<const std::string_view> args) {
@@ -484,7 +528,7 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
     }
     if (cmd == "info") {
         const std::string js = xbe.to_json();
-        if (auto p = opt(args, "--json")) write_file(std::string(*p), js);
+        if (auto p = opt(args, "--json")) write_file(native_path(*p), js);
         std::println("{}", js);
         std::println("file size: {} bytes", file.size());
         std::println("sha256: {}", hash);
@@ -510,7 +554,7 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
     if (cmd == "image") {
         if (args.empty()) return usage();
         auto img = xbe.image();
-        write_file(std::string(args[0]), std::string_view(reinterpret_cast<const char*>(img.data()), img.size()));
+        write_file(native_path(args[0]), std::string_view(reinterpret_cast<const char*>(img.data()), img.size()));
         std::println("base {:08x} size {}", xbe.base, img.size());
         return 0;
     }
@@ -543,7 +587,7 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
         Cfg cfg(xbe, dec, game::cfg_config(xbe, g_supported));
         cfg.run();
         std::print("{}", cfg.summary());
-        if (auto p = opt(args, "--json")) write_file(std::string(*p), cfg.to_json());
+        if (auto p = opt(args, "--json")) write_file(native_path(*p), cfg.to_json());
         return 0;
     }
     if (cmd == "suspects") {
@@ -607,10 +651,14 @@ int run(std::string_view cmd, const std::string& path, std::span<const std::stri
 }  // namespace
 
 int main(int argc, char** argv) {
+    const qilin::CommandLine command_line(argc, argv);
+    argc = command_line.count();
+    argv = command_line.values();
     if (argc == 2 && (std::string_view(argv[1]) == "--version" || std::string_view(argv[1]) == "version")) {
         std::println("qilin {}", QILIN_VERSION);
         return 0;
     }
+    if (argc >= 2 && std::string_view(argv[1]) == "identify") return cmd_identify(argc, argv);
     if (argc < 3) return usage();
     const std::vector<std::string_view> args(argv + 3, argv + argc);
     try {

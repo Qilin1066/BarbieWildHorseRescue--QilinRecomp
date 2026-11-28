@@ -24,15 +24,24 @@ A static recompilation of **Barbie Horse Adventures: Wild Horse Rescue** (Blitz 
 | Direct3D | 🔨 native over the renderer, with fixed-function lighting ([`docs/graphics.md`](docs/graphics.md)) |
 | XMV movie player | ✅ lifted whole, through the video overlay |
 | Enhancements | ✅ widescreen (Hor+, up to 4:1), HUD placement, 1× to 4× resolution, anisotropic filtering, frame rate, five text languages |
-| Windows download (player kit) | ✅ built by CI on every push; not yet run on a real Windows PC |
+| Downloads for Windows, Linux (x86-64, ARM64) and macOS, with the shared launcher | ✅ built and checked by CI on every push; not yet run by a player |
 
 Latest validation record: [`docs/validation-0.16.md`](docs/validation-0.16.md).
 
 ## Playing
 
-### Windows download
+### Downloads
 
-Download the latest build from [Actions](https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/actions/workflows/player-kit.yml) (instructions in `tools/player-kit/README.txt`). Unpack it, double-click **`Play Wild Horse Rescue.bat`** and choose your extracted disc's folder (the one holding `default.xbe`, `Packages` and `Video`). The first run recompiles your `default.xbe` with the bundled compiler (5 to 20 minutes); later runs start the game. The download contains nothing from the game.
+Each release on the [Releases page](https://github.com/Qilin1066/BarbieWildHorseRescue--QilinRecomp/releases) has a download for each system:
+
+| System | Download | Then |
+|---|---|---|
+| Windows 10 or 11, 64-bit | `BarbieWildHorseRescue--QilinRecomp-<version>-windows-x64.zip` | unzip it, double-click **Play Wild Horse Rescue.exe** |
+| Linux x86-64 (glibc 2.35 or later) | `BarbieWildHorseRescue--QilinRecomp-<version>-linux-x86_64.tar.gz` | unpack it, double-click **Play Wild Horse Rescue** |
+| Linux ARM64: Raspberry Pi 4 or 5 (64-bit Raspberry Pi OS) | `BarbieWildHorseRescue--QilinRecomp-<version>-linux-arm64.tar.gz` | the same |
+| macOS 14.5 or later, Apple silicon or Intel | `BarbieWildHorseRescue--QilinRecomp-<version>-macos.dmg` | drag the app onto Applications and open it; the first time, Privacy & Security's **Open Anyway** |
+
+Then choose the folder you extracted your disc into (the one holding `default.xbe`, `Packages` and `Video`), or drag it onto the window: it says straight away if it's another game, another release, or a disc image still to be extracted (with extract-xiso or xdvdfs). The first start builds the game from it on your computer, in a few minutes (longer on a Raspberry Pi); after that, **Play** starts it. Each download's `README.txt` has the details, the controls and where saves go. Windows and Linux bring their own compiler (LLVM-MinGW, zig); a Mac uses Apple's command line tools, which the app offers to install. A graphics driver with Vulkan 1.3 is needed everywhere (on a Pi, Raspberry Pi OS Trixie or later). The game's code is built from your copy and never distributed. The launcher is the one all the QilinRecomp projects share (`tools/player-kit/launcher`, from ToyCommander--QilinRecomp); [`docs/platforms.md`](docs/platforms.md) describes the downloads.
 
 ### From the source on Windows
 
@@ -127,12 +136,12 @@ On Windows, with Visual Studio 2022 17.10 or later ("Desktop development with C+
 | `recomp/runtime/host/` | The host side: `qilin_run`, the replacement registry, guest RAM, the kernel, the scheduler, the file system, Direct3D, DirectSound and the controller library |
 | `recomp/tests/` | Unit tests and the hand-assembled test programs; none needs game files |
 | `tools/build-wildhorse.sh`, `tools/build-wildhorse.ps1` | Build the game from a clone (Linux and macOS; Windows) |
-| `tools/player-kit/` | The Windows download CI builds |
-| `tools/check/` | The LLVM decoder cross-check, the x87 checks and the launcher tests |
+| `tools/player-kit/` | The downloads (Windows, Linux, macOS): packaging, their checks and READMEs, and the launcher (`launcher/`, shared with the other QilinRecomp projects) |
+| `tools/check/` | The LLVM decoder cross-check and the x87 checks |
 | `tools/difftest/` | The differential test |
 | `tools/gen/` | Generators for committed tables and shaders |
 | `tools/analyse-game.ps1` | What `Analyse game.bat` runs |
-| `third_party/` | Vendored dependencies: Zydis and Zycore, Dear ImGui, FSR 1, SMAA and volk (MIT), the Vulkan headers (Apache-2.0 or MIT), nxdk's kernel export list (CC0). See `third_party/README.md` |
+| `third_party/` | Vendored dependencies: Zydis and Zycore, Dear ImGui, FSR 1, SMAA and volk (MIT), the Vulkan headers (Apache-2.0 or MIT), nxdk's kernel export list (CC0), XbSymbolDatabase's licence (MIT; the XDK function names). See `third_party/README.md` |
 | `docs/` | The roadmap and design targets, the recompiler core, the runtime, graphics, the executable and code analysis, naming, prior art, validation records |
 
 ## Versions and changes

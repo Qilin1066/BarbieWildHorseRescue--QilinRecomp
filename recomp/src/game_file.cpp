@@ -6,6 +6,7 @@
 #include <iterator>
 #include <string_view>
 
+#include "path.hpp"
 #include "xiso.hpp"
 
 namespace qilin {
@@ -14,7 +15,7 @@ namespace {
 
 std::expected<std::vector<uint8_t>, std::string> read_whole(const std::filesystem::path& p) {
     std::ifstream f(p, std::ios::binary);
-    if (!f) return std::unexpected("cannot open " + p.string());
+    if (!f) return std::unexpected("cannot open " + utf8_path(p));
     return std::vector<uint8_t>{std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
 
@@ -22,19 +23,20 @@ std::expected<std::vector<uint8_t>, std::string> read_whole(const std::filesyste
 
 bool is_disc_image(const std::string& path) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) return false;
-    std::ifstream f(path, std::ios::binary);
+    const std::filesystem::path p = native_path(path);
+    if (!std::filesystem::is_regular_file(p, ec)) return false;
+    std::ifstream f(p, std::ios::binary);
     char magic[4] = {};
     return f && f.read(magic, 4) && std::string_view(magic, 4) != "XBEH";
 }
 
 std::expected<std::vector<uint8_t>, std::string> load_game_executable(const std::string& path) {
-    const std::filesystem::path p(path);
+    const std::filesystem::path p = native_path(path);
     std::error_code ec;
     if (std::filesystem::is_directory(p, ec)) {
         // An extracted disc: the file name's case is whatever the extractor wrote.
         for (const auto& e : std::filesystem::directory_iterator(p, ec)) {
-            std::string name = e.path().filename().string();
+            std::string name = utf8_path(e.path().filename());
             std::ranges::transform(name, name.begin(), [](char ch) { return ch >= 'A' && ch <= 'Z' ? char(ch - 'A' + 'a') : ch; });
             if (name == "default.xbe") return read_whole(e.path());
         }

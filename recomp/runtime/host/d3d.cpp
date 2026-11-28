@@ -49,6 +49,7 @@
 #include "window.hpp"
 #include "input.hpp"
 #include "menu.hpp"
+#include "path.hpp"
 #include "settings.hpp"
 #include "strf.hpp"
 
@@ -1089,7 +1090,7 @@ void swap(rt::Context& c) {
     ++d.swaps;
     // The settings menu, once the window has shown a frame (it draws with the window's images).
     if (!d.menu && d.config.window && d.config.settings) {
-        auto m = std::make_unique<ui::Menu>(*d.config.window, *d.renderer, *d.config.settings, d.config.settings_folder,
+        auto m = std::make_unique<ui::Menu>(*d.config.window, *d.renderer, *d.config.settings, qilin::native_path(d.config.settings_folder),
                                             [&d](const platform::Settings& s) {
                                                 apply_settings(d, s);
                                                 d.settings_changed = true;
